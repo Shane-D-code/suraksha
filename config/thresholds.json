@@ -1,0 +1,17 @@
+{
+  "email": {
+    "review": 0.30,
+    "warn": 0.55,
+    "block": 0.75
+  },
+  "sms": {
+    "review": 0.25,
+    "warn": 0.50,
+    "block": 0.70
+  },
+  "website": {
+    "review": 0.35,
+    "warn": 0.60,
+    "block": 0.80
+  }
+}

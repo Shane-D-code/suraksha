@@ -1,0 +1,13 @@
+node_id,node_name,node_type
+0,malicious-phish1.com,domain
+1,malicious-phish2.com,domain
+2,malicious-phish3.com,domain
+3,legitimate-bank.com,domain
+4,legitimate-shop.com,domain
+5,newinnocent.com,domain
+6,suspicious-xyz.com,domain
+7,safe-blog.com,domain
+8,192.168.1.10,ip
+9,192.168.1.20,ip
+10,192.168.1.30,ip
+

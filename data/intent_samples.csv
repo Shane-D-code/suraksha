@@ -1,0 +1,7 @@
+text,label
+"Your account will be suspended if you do not verify immediately",phishing
+"Congratulations! You have won a reward. Click to claim",phishing
+"Please review the attached invoice",phishing
+"Hey, are we still on for the meeting tomorrow?",safe
+"Can you send me the report by EOD?",safe
+"Reminder: team standup at 10am",safe

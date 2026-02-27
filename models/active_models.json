@@ -1,0 +1,4 @@
+{
+  "phish_model": "meta_phish_model.joblib",
+  "text_model": "phish_model.joblib"
+}

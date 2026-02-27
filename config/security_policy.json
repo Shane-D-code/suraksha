@@ -1,0 +1,6 @@
+{
+  "block_threshold": 0.7,
+  "warn_threshold": 0.4,
+  "enable_zero_day": true,
+  "enable_brand_detection": true
+}

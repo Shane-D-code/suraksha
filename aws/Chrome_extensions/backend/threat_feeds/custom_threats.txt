@@ -1,0 +1,27 @@
+# PhishGuard Custom Threat Feed
+# Format: One domain per line
+# Lines starting with # are comments
+
+# Known phishing domains
+phishing-example.com
+fake-bank-login.net
+verify-account-now.xyz
+urgent-security-alert.tk
+paypal-verify.ml
+amazon-account-suspended.ga
+netflix-billing-update.cf
+apple-id-locked.gq
+microsoft-security-team.top
+google-account-recovery.work
+
+# Suspicious domains
+crypto-investment-opportunity.click
+free-bitcoin-giveaway.xyz
+win-iphone-now.tk
+claim-your-prize.ml
+urgent-tax-refund.ga
+
+# Test domains for development
+test-phishing-site.com
+demo-malicious-domain.net
+example-threat.org

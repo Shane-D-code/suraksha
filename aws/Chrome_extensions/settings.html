@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhishGuard Settings</title>
+  <style>
+    :root {
+      /* iOS Purple (Primary Brand) */
+      --ios-purple:       #BF5AF2;
+      --ios-purple-light: #D875FF;
+      --ios-purple-dark:  #9D4EDD;
+      --ios-purple-glow:  rgba(191, 90, 242, 0.4);
+      
+      /* Backgrounds */
+      --ios-bg-primary:      #000000;
+      --ios-bg-secondary:    #1C1C1E;
+      --ios-bg-tertiary:     #2C2C2E;
+      --ios-bg-elevated:     #3A3A3C;
+      
+      /* Text */
+      --ios-text-primary:    #FFFFFF;
+      --ios-text-secondary:  rgba(255, 255, 255, 0.8);
+      --ios-text-tertiary:   rgba(255, 255, 255, 0.5);
+      
+      /* Semantic Colors */
+      --ios-green:    #30D158;
+      --ios-orange:   #FF9F0A;
+      --ios-red:      #FF453A;
+      --ios-blue:     #64D2FF;
+      
+      /* Gray Scale */
+      --ios-gray:     #8E8E93;
+      --ios-gray-2:   #636366;
+      --ios-gray-3:   #48484A;
+      --ios-gray-4:   #3A3A3C;
+      --ios-gray-5:   #2C2C2E;
+      
+      /* Typography */
+      --font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 
+                     'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      
+      /* Font Sizes */
+      --text-xs:    11px;
+      --text-sm:    13px;
+      --text-base:  15px;
+      --text-md:    17px;
+      --text-lg:    20px;
+      
+      /* Font Weights */
+      --font-regular: 400;
+      --font-medium:  500;
+      --font-semibold: 600;
+      
+      /* Spacing */
+      --space-1:  4px;
+      --space-2:  8px;
+      --space-3:  12px;
+      --space-4:  16px;
+      --space-5:  20px;
+      --space-6:  24px;
+      
+      /* Border Radius */
+      --radius-sm:     8px;
+      --radius-md:     12px;
+      --radius-lg:     16px;
+      --radius-xl:     20px;
+      --radius-full:   9999px;
+      
+      /* Shadows */
+      --shadow-sm:     0 1px 2px rgba(0, 0, 0, 0.3);
+      --shadow-md:     0 4px 12px rgba(0, 0, 0, 0.4);
+      --shadow-lg:     0 8px 24px rgba(0, 0, 0, 0.5);
+      --shadow-glow:   0 0 20px var(--ios-purple-glow);
+      
+      /* Blur */
+      --blur-sm:   blur(10px);
+      --blur-md:   blur(20px);
+      
+      /* Animation */
+      --ease-default: cubic-bezier(0.25, 0.1, 0.25, 1.0);
+      --duration-normal: 250ms;
+    }
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: var(--font-family);
+      font-size: var(--text-base);
+      line-height: 1.4;
+      max-width: 600px;
+      margin: 40px auto;
+      padding: var(--space-4);
+      background: linear-gradient(180deg, var(--ios-bg-primary) 0%, var(--ios-bg-secondary) 100%);
+      color: var(--ios-text-primary);
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    
+    .container {
+      background: var(--ios-bg-secondary);
+      border-radius: var(--radius-xl);
+      padding: var(--space-6);
+      box-shadow: var(--shadow-md);
+    }
+    
+    h1 {
+      font-size: var(--text-lg);
+      font-weight: var(--font-semibold);
+      color: var(--ios-text-primary);
+      margin-bottom: var(--space-2);
+      letter-spacing: -0.2px;
+    }
+    
+    .subtitle {
+      color: var(--ios-text-tertiary);
+      margin-bottom: var(--space-6);
+      font-size: var(--text-sm);
+    }
+    
+    .setting-group {
+      margin: var(--space-5) 0;
+      padding: var(--space-5);
+      background: var(--ios-bg-tertiary);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--ios-gray-4);
+    }
+    
+    .setting-group h2 {
+      font-size: var(--text-md);
+      font-weight: var(--font-semibold);
+      color: var(--ios-text-primary);
+      margin-bottom: var(--space-2);
+    }
+    
+    .setting-group p {
+      font-size: var(--text-sm);
+      color: var(--ios-text-secondary);
+      line-height: 1.5;
+      margin-bottom: var(--space-4);
+    }
+    
+    .toggle-container {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+    
+    /* iOS Toggle Switch */
+    .toggle {
+      position: relative;
+      width: 51px;
+      height: 31px;
+      flex-shrink: 0;
+    }
+    
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--ios-gray-3);
+      transition: var(--duration-normal);
+      border-radius: var(--radius-full);
+    }
+    
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 27px;
+      width: 27px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: var(--duration-normal);
+      border-radius: 50%;
+      box-shadow: var(--shadow-sm);
+    }
+    
+    input:checked + .slider {
+      background-color: var(--ios-purple);
+    }
+    
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+    
+    .toggle-label {
+      font-size: var(--text-sm);
+      color: var(--ios-text-primary);
+      font-weight: var(--font-medium);
+    }
+    
+    .info-box {
+      background: linear-gradient(135deg, rgba(100, 210, 255, 0.15) 0%, rgba(100, 210, 255, 0.05) 100%);
+      padding: var(--space-4);
+      border-radius: var(--radius-md);
+      margin: var(--space-5) 0;
+      border: 1px solid rgba(100, 210, 255, 0.3);
+    }
+    
+    .info-box strong {
+      color: var(--ios-text-primary);
+      font-size: var(--text-sm);
+      display: block;
+      margin-bottom: var(--space-2);
+    }
+    
+    .info-box p {
+      color: var(--ios-text-secondary);
+      font-size: var(--text-xs);
+      margin: var(--space-1) 0;
+    }
+    
+    .status {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: var(--radius-full);
+      font-size: var(--text-xs);
+      font-weight: var(--font-medium);
+      margin-left: var(--space-2);
+    }
+    
+    .status.enabled {
+      background: rgba(48, 209, 88, 0.2);
+      color: var(--ios-green);
+    }
+    
+    .status.disabled {
+      background: rgba(255, 69, 58, 0.2);
+      color: var(--ios-red);
+    }
+    
+    /* iOS Button */
+    .save-button {
+      background: linear-gradient(135deg, var(--ios-purple) 0%, var(--ios-purple-dark) 100%);
+      color: white;
+      border: none;
+      padding: var(--space-4) var(--space-6);
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      font-size: var(--text-base);
+      font-weight: var(--font-semibold);
+      margin-top: var(--space-5);
+      width: 100%;
+      transition: var(--duration-normal);
+      box-shadow: var(--shadow-glow);
+    }
+    
+    .save-button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 0 30px var(--ios-purple-glow);
+    }
+    
+    .save-button:active {
+      transform: translateY(0);
+    }
+    
+    .save-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    .success-message {
+      display: none;
+      background: rgba(48, 209, 88, 0.2);
+      border: 1px solid rgba(48, 209, 88, 0.4);
+      color: var(--ios-green);
+      padding: var(--space-3);
+      border-radius: var(--radius-md);
+      margin-top: var(--space-4);
+      font-size: var(--text-sm);
+      text-align: center;
+    }
+    
+    .success-message.show {
+      display: block;
+    }
+    
+    /* Focus states */
+    *:focus {
+      outline: 2px solid var(--ios-purple);
+      outline-offset: 2px;
+    }
+    
+    *:focus:not(:focus-visible) {
+      outline: none;
+    }
+    
+    /* Selection */
+    ::selection {
+      background: var(--ios-purple);
+      color: white;
+    }
+    
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--ios-bg-primary);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--ios-gray-3);
+      border-radius: var(--radius-full);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PhishGuard Settings</h1>
+    <p class="subtitle">Configure your phishing protection preferences</p>
+
+    <div class="info-box">
+      <strong>Phase 3: Local AI Protection</strong>
+      <p>PhishGuard now uses on-device AI to analyze pages instantly</p>
+      <p>Reduces backend dependency and improves privacy</p>
+    </div>
+
+    <div class="setting-group">
+      <h2>Local AI Inference <span class="status enabled" id="ai-status">Enabled</span></h2>
+      <p>Run AI analysis locally in your browser for instant threat detection. When enabled, only suspicious pages are sent to the backend for verification.</p>
+      
+      <div class="toggle-container">
+        <label class="toggle">
+          <input type="checkbox" id="enable-local-ai" checked>
+          <span class="slider"></span>
+        </label>
+        <span class="toggle-label">Use local AI first</span>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <h2>Privacy Mode</h2>
+      <p>When enabled, LOW-risk pages are never sent to the backend, keeping your browsing data private.</p>
+      
+      <div class="toggle-container">
+        <label class="toggle">
+          <input type="checkbox" id="privacy-mode" checked>
+          <span class="slider"></span>
+        </label>
+        <span class="toggle-label">Enable privacy mode</span>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <h2>Performance Logging</h2>
+      <p>Log inference times and performance metrics to the console for debugging.</p>
+      
+      <div class="toggle-container">
+        <label class="toggle">
+          <input type="checkbox" id="performance-logging" checked>
+          <span class="slider"></span>
+        </label>
+        <span class="toggle-label">Enable performance logs</span>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <strong>How it works:</strong>
+      <p>1. Local AI analyzes page instantly (<200ms)</p>
+      <p>2. LOW risk pages: allowed immediately</p>
+      <p>3. MEDIUM/HIGH: verified with backend</p>
+      <p>4. Backend offline: use local AI decision</p>
+    </div>
+
+    <button class="save-button" id="save-button">Save Settings</button>
+    <div class="success-message" id="success-message">
+      ✓ Settings saved successfully
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

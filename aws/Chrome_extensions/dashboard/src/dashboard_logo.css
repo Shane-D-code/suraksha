@@ -1,0 +1,23 @@
+/* Logo Styles */
+.cyber-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.logo-text {
+  font-family: 'Press Start 2P', cursive;
+  font-size: 1rem;
+  color: var(--neon-green);
+  text-shadow: 0 0 10px var(--glow), 0 0 20px var(--glow);
+  letter-spacing: 0.1em;
+}
+
+.logo-subtitle {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--neon-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}

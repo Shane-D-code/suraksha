@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhishGuard Test Page - Risk Simulator</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #1976d2;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+    }
+    .test-section {
+      margin: 30px 0;
+      padding: 20px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+    }
+    .test-section h2 {
+      margin-top: 0;
+      color: #333;
+      font-size: 18px;
+    }
+    .risk-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-left: 10px;
+    }
+    .risk-high { background: #ffebee; color: #c62828; }
+    .risk-medium { background: #fff3e0; color: #e65100; }
+    .risk-low { background: #e8f5e9; color: #2e7d32; }
+    button {
+      background: #1976d2;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin: 5px;
+    }
+    button:hover {
+      background: #1565c0;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .hidden-content {
+      display: none;
+    }
+    .warning-text {
+      color: #d32f2f;
+      font-weight: 600;
+      margin: 10px 0;
+    }
+    iframe {
+      width: 100%;
+      height: 200px;
+      border: 1px solid #ddd;
+      margin: 10px 0;
+    }
+    .info {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+      border-left: 4px solid #1976d2;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🛡️ PhishGuard Test Page</h1>
+    <p class="subtitle">Use this page to test different risk scenarios</p>
+
+    <div class="info">
+      <strong>Instructions:</strong> Click the buttons below to simulate different risk levels. 
+      The extension will scan the page and respond accordingly.
+    </div>
+
+    <!-- LOW RISK SCENARIO -->
+    <div class="test-section">
+      <h2>✅ Low Risk Scenario <span class="risk-badge risk-low">LOW</span></h2>
+      <p>This is a normal, safe page with minimal suspicious indicators.</p>
+      <button onclick="alert('This is a safe page!')">Safe Button</button>
+    </div>
+
+    <!-- MEDIUM RISK SCENARIO -->
+    <div class="test-section" id="medium-risk">
+      <h2>⚠️ Medium Risk Scenario <span class="risk-badge risk-medium">MEDIUM</span></h2>
+      <p>This section contains some suspicious elements that trigger a warning banner.</p>
+      <p class="warning-text">URGENT: Please verify your account immediately!</p>
+      <p>Your account has unusual activity. Click here to confirm your identity.</p>
+      <form>
+        <input type="text" placeholder="Username" />
+        <input type="password" placeholder="Password" />
+        <button type="button">Login</button>
+      </form>
+      <a href="http://external-site-1.com">External Link 1</a>
+      <a href="http://external-site-2.com">External Link 2</a>
+      <a href="http://external-site-3.com">External Link 3</a>
+      <a href="http://external-site-4.com">External Link 4</a>
+      <a href="http://external-site-5.com">External Link 5</a>
+      <a href="http://external-site-6.com">External Link 6</a>
+    </div>
+
+    <!-- HIGH RISK SCENARIO -->
+    <div class="test-section hidden-content" id="high-risk">
+      <h2>🚨 High Risk Scenario <span class="risk-badge risk-high">HIGH</span></h2>
+      <p class="warning-text">URGENT: Your account has been suspended!</p>
+      <p class="warning-text">Verify your account immediately to avoid permanent suspension!</p>
+      <p>Click here immediately to reset password and confirm your identity.</p>
+      <p>Unusual activity detected. Update payment information now.</p>
+      
+      <form>
+        <input type="text" placeholder="Email" />
+        <input type="password" placeholder="Current Password" />
+        <input type="password" placeholder="New Password" />
+        <input type="hidden" name="token" value="abc123" />
+        <input type="hidden" name="session" value="xyz789" />
+        <input type="hidden" name="redirect" value="malicious.com" />
+        <button type="button">Verify Account Now</button>
+      </form>
+
+      <iframe src="about:blank"></iframe>
+      <iframe src="about:blank"></iframe>
+
+      <a href="http://external-1.com">Link 1</a>
+      <a href="http://external-2.com">Link 2</a>
+      <a href="http://external-3.com">Link 3</a>
+      <a href="http://external-4.com">Link 4</a>
+      <a href="http://external-5.com">Link 5</a>
+      <a href="http://external-6.com">Link 6</a>
+      <a href="http://external-7.com">Link 7</a>
+      <a href="http://external-8.com">Link 8</a>
+      <a href="http://external-9.com">Link 9</a>
+      <a href="http://external-10.com">Link 10</a>
+    </div>
+
+    <!-- CONTROLS -->
+    <div class="test-section">
+      <h2>🎮 Test Controls</h2>
+      <button onclick="showLowRisk()">Test Low Risk</button>
+      <button onclick="showMediumRisk()">Test Medium Risk</button>
+      <button onclick="showHighRisk()">Test High Risk</button>
+      <button onclick="location.reload()">Reset Page</button>
+    </div>
+
+    <div class="info">
+      <strong>Expected Behavior:</strong>
+      <ul style="margin: 10px 0; padding-left: 20px;">
+        <li><strong>Low Risk:</strong> No blocking, silent operation</li>
+        <li><strong>Medium Risk:</strong> Warning banner at top of page</li>
+        <li><strong>High Risk:</strong> Full-screen block overlay with security warning</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    function showLowRisk() {
+      document.getElementById('medium-risk').classList.add('hidden-content');
+      document.getElementById('high-risk').classList.add('hidden-content');
+      location.reload();
+    }
+
+    function showMediumRisk() {
+      document.getElementById('medium-risk').classList.remove('hidden-content');
+      document.getElementById('high-risk').classList.add('hidden-content');
+      location.reload();
+    }
+
+    function showHighRisk() {
+      document.getElementById('medium-risk').classList.remove('hidden-content');
+      document.getElementById('high-risk').classList.remove('hidden-content');
+      location.reload();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+# PhishGuard Backend Requirements
+# Install with: pip install -r requirements.txt
+
+# FastAPI and server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Authentication
+pyjwt>=2.8.0
+python-multipart>=0.0.6
+
+# Security
+passlib>=1.7.4
+bcrypt>=4.1.0
+
+# PyTorch (required for GNN)
+torch>=2.0.0
+torch-geometric>=2.3.0
+torch-scatter>=2.1.0
+torch-sparse>=0.6.17
+
+# Graph analysis
+networkx>=3.0
+
+# Machine learning utilities
+scikit-learn>=1.3.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Async HTTP client
+aiohttp>=3.8.0
+
+# Database (optional, for PostgreSQL)
+# psycopg2-binary>=2.9.0
+
+# Scheduling (optional, for advanced scheduling)
+# APScheduler>=3.10.0
+# celery>=5.2.0
+
+# Additional utilities
+python-dateutil>=2.8.0

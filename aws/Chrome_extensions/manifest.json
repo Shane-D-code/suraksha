@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "PhishGuard Scanner",
+  "version": "4.0.0",
+  "description": "AI-powered multi-channel phishing detection for web, email, and messaging platforms",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["local_inference.js", "blocker.js", "content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["local_inference.js", "gmail_scanner.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://web.whatsapp.com/*",
+        "https://web.telegram.org/*",
+        "https://discord.com/*",
+        "https://*.slack.com/*"
+      ],
+      "js": ["local_inference.js", "message_scanner.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PhishGuard Scanner"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["block.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

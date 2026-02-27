@@ -1,0 +1,165 @@
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 🍎 PhishGuard iOS Lilac Theme - Overlay Styles
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 
+ * Premium iOS/macOS-inspired design with lilac accent
+ * ONLY styling - no JavaScript modifications
+ * 
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/* iOS Lilac Theme Variables */
+#phishguard-overlay,
+#phishguard-banner {
+  /* iOS Purple */
+  --ios-purple: #BF5AF2;
+  --ios-purple-glow: rgba(191, 90, 242, 0.4);
+  
+  /* Backgrounds */
+  --ios-bg-primary: #000000;
+  --ios-bg-secondary: #1C1C1E;
+  
+  /* Text */
+  --ios-text-primary: #FFFFFF;
+  --ios-text-secondary: rgba(255, 255, 255, 0.8);
+  --ios-text-tertiary: rgba(255, 255, 255, 0.5);
+  
+  /* Semantic Colors */
+  --ios-red: #FF453A;
+  --ios-orange: #FF9F0A;
+  
+  /* Gray Scale */
+  --ios-gray-3: #48484A;
+  --ios-gray-4: #3A3A3C;
+  
+  /* Border Radius */
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  
+  /* Shadows */
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  
+  /* Blur */
+  --blur-md: blur(20px);
+  --blur-lg: blur(30px);
+  
+  /* Animation */
+  --duration-normal: 250ms;
+}
+
+/* Reset and isolation for overlay components */
+#phishguard-overlay *,
+#phishguard-banner * {
+  all: initial !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 
+               'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
+  box-sizing: border-box !important;
+}
+
+/* Overlay container */
+#phishguard-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background: rgba(0, 0, 0, 0.7) !important;
+  backdrop-filter: var(--blur-lg) !important;
+  -webkit-backdrop-filter: var(--blur-lg) !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: auto !important;
+}
+
+/* Overlay content - iOS Style */
+#phishguard-overlay > div {
+  background: var(--ios-bg-secondary) !important;
+  backdrop-filter: var(--blur-md) !important;
+  -webkit-backdrop-filter: var(--blur-md) !important;
+  border: 1px solid var(--ios-gray-4) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+  padding: 24px !important;
+  max-width: 400px !important;
+  text-align: center !important;
+  position: relative !important;
+  overflow: hidden !important;
+  color: var(--ios-text-primary) !important;
+}
+
+/* Top accent */
+#phishguard-overlay > div::before {
+  content: '' !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 3px !important;
+  background: linear-gradient(90deg, var(--ios-red), var(--ios-purple)) !important;
+}
+
+/* Warning banner - iOS Style */
+#phishguard-banner {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  background: var(--ios-bg-secondary) !important;
+  backdrop-filter: var(--blur-md) !important;
+  -webkit-backdrop-filter: var(--blur-md) !important;
+  border-bottom: 1px solid var(--ios-gray-4) !important;
+  color: var(--ios-text-primary) !important;
+  padding: 12px 16px !important;
+  z-index: 2147483646 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-shadow: var(--shadow-md) !important;
+  pointer-events: auto !important;
+}
+
+/* Banner text - iOS Orange */
+#phishguard-banner .banner-text {
+  color: var(--ios-orange) !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+}
+
+/* Banner buttons - iOS Style */
+#phishguard-banner .banner-btn {
+  background: rgba(255, 69, 58, 0.15) !important;
+  border: 1px solid rgba(255, 69, 58, 0.4) !important;
+  border-radius: 8px !important;
+  color: var(--ios-text-primary) !important;
+  padding: 8px 16px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all var(--duration-normal) !important;
+  margin-left: 10px !important;
+}
+
+#phishguard-banner .banner-btn:hover {
+  background: rgba(255, 69, 58, 0.25) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Animation for smooth appearance */
+@keyframes phishguard-fadein {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+#phishguard-overlay > div {
+  animation: phishguard-fadein var(--duration-normal) ease-out !important;
+}

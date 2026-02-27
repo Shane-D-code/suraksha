@@ -1,0 +1,9 @@
+{
+  "url": "https://paypal-verify.fake-site.xyz/login",
+  "deep_analysis": true,
+  "extract_artifacts": true,
+  "check_whois": true,
+  "check_dns": true,
+  "check_ssl": true,
+  "check_threat_intel": true
+}
