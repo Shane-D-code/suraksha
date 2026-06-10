@@ -16,11 +16,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 import structlog
+from app.services.embedding_service import EMBEDDING_DIM
 
 logger = structlog.get_logger(__name__)
-
-EMBEDDING_DIM = 32
-
 
 # ─── Data Structures ─────────────────────────────────────────────────────────
 
@@ -141,7 +139,7 @@ class SimilarityService:
         Called after every scan to add/update this domain's embedding.
         Thread-safe via asyncio lock.
         """
-        embedding = embedding.astype(np.float32)
+        embedding = self._validate_embedding(embedding, domain)
 
         # Normalize for cosine similarity (FAISS inner product = cosine on unit vectors)
         norm = np.linalg.norm(embedding)
@@ -196,6 +194,16 @@ class SimilarityService:
             logger.error(f"FAISS add failed for {domain}: {e}", exc_info=True)
             raise e
 
+    @staticmethod
+    def _validate_embedding(embedding: np.ndarray, domain: str) -> np.ndarray:
+        embedding = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        if embedding.size != EMBEDDING_DIM:
+            raise ValueError(
+                f"Invalid embedding dimension for {domain}: "
+                f"expected {EMBEDDING_DIM}, got {embedding.size}"
+            )
+        return embedding
+
     def _save_faiss_index(self):
         import faiss
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,7 +229,7 @@ class SimilarityService:
                 raw = json.loads(cached)
                 return [SimilarDomain(**r) for r in raw]
 
-        embedding = embedding.astype(np.float32)
+        embedding = self._validate_embedding(embedding, domain)
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm

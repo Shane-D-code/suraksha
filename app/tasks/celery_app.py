@@ -19,6 +19,7 @@ celery_app = Celery(
         "app.tasks.feed_tasks",
         "app.tasks.graph_tasks",
         "app.tasks.maintenance",
+        "app.tasks.scans",
     ],
 )
 
@@ -37,6 +38,10 @@ celery_app.conf.update(
     result_expires=3600,  # Results expire after 1 hour
     task_acks_late=True,  # Acknowledge task after completion
     task_reject_on_worker_lost=True,  # Requeue if worker dies
+    task_default_queue="celery",
+    task_routes={
+        "app.tasks.scans.process_scan": {"queue": "celery"},
+    },
 )
 
 # Celery Beat Schedule Configuration

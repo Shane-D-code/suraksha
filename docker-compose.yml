@@ -63,7 +63,7 @@ services:
 
   celery_worker:
     build: .
-    command: celery -A app.tasks.celery_app worker --loglevel=info
+    command: celery -A app.tasks.celery_app worker --loglevel=info --queues=celery
     env_file:
       - .env.docker
     environment:

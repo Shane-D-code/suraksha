@@ -2,6 +2,7 @@
 """
 Start all PhishGuard services:
 - Backend API (FastAPI)
+- Celery scan worker
 - Frontend Dashboard (Vite/React)
 - Verify ML models are loaded
 - Verify database and Redis connections
@@ -110,6 +111,30 @@ def start_backend():
         print_status(f"Backend not responding: {e}", "error")
         # Still return process, it might be starting up
         return backend_process
+
+
+def start_celery_worker():
+    """Start the Celery worker required by POST /api/v1/scans."""
+    print_status("Starting Celery scan worker...", "info")
+    worker_process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "celery",
+            "-A",
+            "app.tasks.celery_app",
+            "worker",
+            "--loglevel=info",
+            "--queues=celery",
+        ],
+        cwd=Path(__file__).parent,
+    )
+    time.sleep(3)
+    if worker_process.poll() is not None:
+        print_status("Celery worker failed to start", "error")
+        return None
+    print_status("Celery scan worker: Running", "success")
+    return worker_process
 
 def start_frontend():
     """Start the frontend dashboard."""
@@ -275,6 +300,12 @@ def main():
     if not backend_process:
         print_status("Failed to start backend", "error")
         sys.exit(1)
+
+    celery_process = start_celery_worker()
+    if not celery_process:
+        backend_process.terminate()
+        print_status("Cannot process scans without the Celery worker", "error")
+        sys.exit(1)
     
     # Start frontend
     frontend_process = start_frontend()
@@ -303,6 +334,10 @@ def main():
         if backend_process:
             backend_process.terminate()
             print_status("Backend stopped", "info")
+
+        if celery_process:
+            celery_process.terminate()
+            print_status("Celery worker stopped", "info")
         
         if frontend_process:
             frontend_process.terminate()

@@ -30,6 +30,16 @@ from app.services.realtime_stats_engine import (
     get_redis_structures
 )
 from app.services.database import get_db_session
+from app.models.db import Scan as DBScan
+from app.services.scan_processing import (
+    create_pending_scan,
+    mark_scan_queue_failure,
+    mark_scan_queued,
+    scan_to_detail,
+    scan_to_recent,
+)
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger(__name__)
 
@@ -118,7 +128,7 @@ class AlertConfigRequest(BaseModel):
 # ─── Scan Management Endpoints ─────────────────────────────────────────────
 
 @router.post("/scans", response_model=ScanResponse, status_code=status.HTTP_202_ACCEPTED)
-async def create_scan(request: ScanRequest):
+async def create_scan(request: ScanRequest, session: AsyncSession = Depends(get_db_session)):
     """
     Create a new scan request.
     
@@ -126,6 +136,7 @@ async def create_scan(request: ScanRequest):
     """
     scan_id = str(uuid.uuid4())
     created_at = datetime.utcnow()
+    logger.info("Scan creation started", scan_id=scan_id, type=request.scan_type)
     
     # Validate input
     if not request.url and not request.text and not request.html:
@@ -134,22 +145,22 @@ async def create_scan(request: ScanRequest):
             detail="At least one of url, text, or html must be provided"
         )
     
-    # Store scan request in Redis queue
-    redis_structs = await get_redis_structures()
-    
-    scan_data = {
-        "scan_id": scan_id,
-        "url": request.url,
-        "text": request.text,
-        "html": request.html,
-        "scan_type": request.scan_type,
-        "source": request.source,
-        "metadata": request.metadata,
-        "user_id": request.user_id,
-        "created_at": created_at.isoformat()
-    }
-    
-    await redis_structs.add_to_scan_queue(scan_data)
+    await create_pending_scan(session, scan_id, request, created_at)
+
+    try:
+        from app.tasks.scans import process_scan_task
+        task = process_scan_task.apply_async(
+            args=[scan_id],
+            queue="celery",
+            retry=True,
+            retry_policy={"max_retries": 3, "interval_start": 0, "interval_step": 1},
+        )
+        await mark_scan_queued(session, scan_id, task.id, "celery")
+        logger.info("Scan queued to Celery broker", scan_id=scan_id, task_id=task.id, queue="celery")
+    except Exception as exc:
+        await mark_scan_queue_failure(session, scan_id, str(exc))
+        logger.error("Failed to queue scan", scan_id=scan_id, error=str(exc))
+        raise HTTPException(status_code=503, detail="Scan persisted but background queue is unavailable")
     
     # Update stats
     stats = await get_stats_engine()
@@ -181,16 +192,22 @@ async def create_scan(request: ScanRequest):
 
 
 @router.get("/scans/{scan_id}", response_model=ScanDetailResponse)
-async def get_scan(scan_id: str):
+async def get_scan(scan_id: str, session: AsyncSession = Depends(get_db_session)):
     """Get scan details and results."""
     # Try cache first
     redis_structs = await get_redis_structures()
     cached = await redis_structs.get_cached_scan_result(scan_id)
     
     if cached:
+        logger.info("Scan retrieval succeeded", scan_id=scan_id, source="redis")
         return ScanDetailResponse(**cached)
-    
-    # For now, return mock data - in production would query database
+
+    scan = await session.scalar(select(DBScan).where(DBScan.scan_id == scan_id))
+    if scan:
+        detail = scan_to_detail(scan)
+        logger.info("Scan retrieval succeeded", scan_id=scan_id, source="postgresql")
+        return ScanDetailResponse(**detail)
+
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Scan {scan_id} not found"
@@ -205,17 +222,17 @@ async def list_scans(
     threat_level: Optional[str] = Query(None),
     scan_type: Optional[str] = Query(None),
     start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None)
+    end_date: Optional[datetime] = Query(None),
+    session: AsyncSession = Depends(get_db_session),
 ):
     """List scans with filtering and pagination."""
-    # Get from Redis cache for recent scans
-    redis_structs = await get_redis_structures()
-    recent = await redis_structs.get_recent_scans(limit)
-    
-    # In production, this would query the database
+    stmt = select(DBScan).order_by(DBScan.created_at.desc()).offset((page - 1) * limit).limit(limit)
+    count_stmt = select(func.count(DBScan.id))
+    scans = (await session.execute(stmt)).scalars().all()
+    total = (await session.execute(count_stmt)).scalar() or 0
     return RecentScansResponse(
-        scans=recent,
-        total=len(recent)
+        scans=[scan_to_recent(scan) for scan in scans],
+        total=total,
     )
 
 
@@ -364,11 +381,13 @@ async def get_chart_data(chart_type: str):
 
 
 @router.get("/dashboard/recent-scans", response_model=RecentScansResponse)
-async def get_recent_scans(limit: int = Query(10, ge=1, le=50)):
+async def get_recent_scans(
+    limit: int = Query(10, ge=1, le=50),
+    session: AsyncSession = Depends(get_db_session),
+):
     """Get recent scans."""
-    stats = await get_stats_engine()
-    recent = await stats.get_recent_scans(limit)
-    
+    stmt = select(DBScan).order_by(DBScan.created_at.desc()).limit(limit)
+    recent = [scan_to_recent(scan) for scan in (await session.execute(stmt)).scalars().all()]
     return RecentScansResponse(
         scans=recent,
         total=len(recent)

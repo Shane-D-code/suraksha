@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
                 version=settings.APP_VERSION,
                 environment=settings.ENVIRONMENT)
     logger.info(f"Redis URL: {settings.REDIS_URL}")
+    print("FASTAPI_REDIS_URL:", settings.REDIS_URL)
     logger.info(f"Database: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else 'local'}")
     
     # Initialize database
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
     logger.info("Redis initialized")
     
     # Initialize WebSocket Manager
+    print("MAIN WS_MANAGER ID:", id(ws_manager))
     try:
         await ws_manager.start()
         logger.info("WebSocket Manager started")

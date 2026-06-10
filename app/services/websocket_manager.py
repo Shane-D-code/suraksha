@@ -8,6 +8,7 @@ This module provides WebSocket functionality for:
 - Connection management
 """
 import json
+import traceback
 import uuid
 import asyncio
 from datetime import datetime
@@ -17,6 +18,8 @@ from enum import Enum
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+REDIS_EVENTS_CHANNEL = "phishguard:scan_events"
 
 
 class WebSocketEventType(str, Enum):
@@ -112,14 +115,20 @@ class WebSocketManager:
             "messages_received": 0,
             "errors": 0
         }
-        
+        self._redis_pubsub = None
+        self._redis_subscriber_task: Optional[asyncio.Task] = None
+
         logger.info("WebSocketManager initialized")
     
     async def start(self):
         """Start the WebSocket manager."""
+        print("DEBUG: WS_MANAGER_START_ENTERED", "id:", id(self))
         self.running = True
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         self._queue_processor_task = asyncio.create_task(self._process_queue())
+        print("DEBUG: CREATING_REDIS_SUBSCRIBER")
+        self._redis_subscriber_task = asyncio.create_task(self._redis_event_subscriber())
+        print("DEBUG: REDIS_SUBSCRIBER_TASK_CREATED")
         logger.info("WebSocketManager started")
     
     async def stop(self):
@@ -138,6 +147,19 @@ class WebSocketManager:
             try:
                 await self._queue_processor_task
             except asyncio.CancelledError:
+                pass
+        
+        if self._redis_subscriber_task:
+            self._redis_subscriber_task.cancel()
+            try:
+                await self._redis_subscriber_task
+            except asyncio.CancelledError:
+                pass
+        
+        if self._redis_pubsub:
+            try:
+                await self._redis_pubsub.close()
+            except Exception:
                 pass
         
         # Close all connections
@@ -163,16 +185,17 @@ class WebSocketManager:
         client = ClientConnection(
             client_id=client_id,
             websocket=websocket,
-            channels={"global"}  # Default channel
+            channels={"global", "scans", "stats"}  # Default channels
         )
         
         self.clients[client_id] = client
         self.stats["total_connections"] += 1
         
-        # Add to global channel
-        if "global" not in self.channels:
-            self.channels["global"] = set()
-        self.channels["global"].add(client_id)
+        # Add to default channels
+        for ch in ("global", "scans", "stats"):
+            if ch not in self.channels:
+                self.channels[ch] = set()
+            self.channels[ch].add(client_id)
         
         # Send connection acknowledgment
         ack_message = WebSocketMessage(
@@ -241,6 +264,10 @@ class WebSocketManager:
             # Send to all clients
             client_ids = set(self.clients.keys())
         
+        logger.info("WS channel subscribers",
+                    channel=channel,
+                    subscriber_count=len(client_ids))
+
         disconnected_clients = []
         
         for client_id in client_ids:
@@ -341,9 +368,10 @@ class WebSocketManager:
                 self.channels[channel] = set()
             self.channels[channel].add(client_id)
             
-            logger.info("Client subscribed to channel", 
+            logger.info("WS client subscribed", 
                        client_id=client_id, 
-                       channel=channel)
+                       channel=channel,
+                       subscribers=len(self.channels.get(channel, set())))
     
     async def unsubscribe(self, client_id: str, channel: str):
         """Unsubscribe client from a channel."""
@@ -407,6 +435,123 @@ class WebSocketManager:
             except Exception as e:
                 logger.error("Queue processor error", error=str(e))
     
+    async def _redis_event_subscriber(self):
+        """Subscribe to Redis scan events and forward to WebSocket clients.
+        Retries forever on connection errors.
+        """
+        print("DEBUG: REDIS_SUBSCRIBER_ENTERED")
+        # Retry loop for Redis initialization
+        while self.running:
+            try:
+                from app.services.redis import get_redis_client
+                from app.config import settings
+                print("SUBSCRIBE REDIS URL:", settings.REDIS_URL)
+                redis = await get_redis_client()
+                print("SUBSCRIBE REDIS CLIENT:", redis)
+                self._redis_pubsub = redis.pubsub()
+                await self._redis_pubsub.subscribe(REDIS_EVENTS_CHANNEL)
+                print("DEBUG: REDIS_SUBSCRIBED", "channel:", REDIS_EVENTS_CHANNEL)
+                logger.info("Redis event subscriber started",
+                            channel=REDIS_EVENTS_CHANNEL)
+                break
+            except Exception as e:
+                logger.warning("Redis subscriber init failed, retrying in 3s",
+                               error=str(e),
+                               traceback=traceback.format_exc())
+                await asyncio.sleep(3)
+
+        # Message loop
+        while self.running:
+            try:
+                message = await self._redis_pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=1.0
+                )
+                if message is None:
+                    continue
+                if message["type"] not in ("message",):
+                    continue
+
+                data = json.loads(message["data"])
+                print("REDIS_PAYLOAD:", data)
+                event = data["event"]
+                scan_id = data.get("scan_id", "")
+                payload = data.get("data", {})
+
+                logger.info("WS broadcast received from Redis",
+                            redis_event=event, scan_id=scan_id,
+                            payload_keys=list(payload.keys()))
+
+                if event == "scan:processing":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.SCAN_PROGRESS.value,
+                        data={
+                            "scan_id": scan_id,
+                            "progress": 50,
+                            "stage": "processing",
+                            "timestamp": datetime.utcnow().isoformat(),
+                        },
+                    )
+                    print("ABOUT_TO_BROADCAST", event)
+                    await self.broadcast(ws_msg, "scans")
+                    logger.info("WS scan processing event emitted",
+                                scan_id=scan_id)
+
+                elif event == "scan:completed":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.SCAN_COMPLETED.value,
+                        data={
+                            "scan_id": scan_id,
+                            "risk_score": payload.get("risk_score", 0),
+                            "threat_level": payload.get("threat_level", "unknown"),
+                            "processing_time_ms": payload.get("processing_time_ms", 0),
+                            "timestamp": datetime.utcnow().isoformat(),
+                        },
+                    )
+                    print("ABOUT_TO_BROADCAST", event)
+                    await self.broadcast(ws_msg, "scans")
+                    logger.info("WS scan completed event emitted",
+                                scan_id=scan_id,
+                                risk_score=payload.get("risk_score"),
+                                threat_level=payload.get("threat_level"))
+
+                elif event == "scan:failed":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.ERROR.value,
+                        data={
+                            "scan_id": scan_id,
+                            "error": payload.get("error", "Scan processing failed"),
+                            "timestamp": datetime.utcnow().isoformat(),
+                        },
+                    )
+                    print("ABOUT_TO_BROADCAST", event)
+                    await self.broadcast(ws_msg, "scans")
+                    logger.info("WS scan failed event emitted",
+                                scan_id=scan_id,
+                                error=payload.get("error"))
+
+                elif event == "threat:detected":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.THREAT_DETECTED.value,
+                        data={
+                            "threat": payload,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        },
+                    )
+                    print("ABOUT_TO_BROADCAST", event)
+                    await self.broadcast(ws_msg, "threats")
+                    logger.info("WS threat detected event emitted",
+                                scan_id=scan_id,
+                                threat_type=payload.get("type"))
+
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.error("Redis subscriber error",
+                             error=str(e),
+                             traceback=traceback.format_exc())
+                await asyncio.sleep(1)
+
     def get_connected_clients_count(self) -> int:
         """Get count of connected clients."""
         return len(self.clients)
@@ -445,6 +590,7 @@ async def websocket_endpoint(websocket):
     try:
         # Accept connection
         await websocket.accept()
+        print("WS_ENDPOINT WS_MANAGER ID:", id(ws_manager))
         
         # Register connection
         client_id = await ws_manager.connect(websocket)

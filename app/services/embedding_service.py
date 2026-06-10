@@ -28,8 +28,8 @@ from app.services.redis import get_raw_redis_client
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_DIM = 32
-FEATURE_DIM = 8  # raw node feature size
+EMBEDDING_DIM = 64
+FEATURE_DIM = 7  # raw node feature size
 
 # Check if torch_geometric is available
 TORCH_GEOMETRIC_AVAILABLE = False
@@ -211,10 +211,18 @@ class EmbeddingService:
             cached_score = await raw_redis.get(f"score:{domain}")
             
             if cached and cached_score:
-                return (
-                    np.frombuffer(cached, dtype=np.float32),
-                    float(cached_score.decode() if isinstance(cached_score, bytes) else cached_score)
-                )
+                embedding = np.frombuffer(cached, dtype=np.float32)
+                if embedding.size != EMBEDDING_DIM:
+                    logger.warning(
+                        "Ignoring cached embedding with wrong dimension: "
+                        f"domain={domain} expected={EMBEDDING_DIM} actual={embedding.size}"
+                    )
+                    await raw_redis.delete(f"embedding:{domain}", f"score:{domain}")
+                else:
+                    return (
+                        embedding,
+                        float(cached_score.decode() if isinstance(cached_score, bytes) else cached_score)
+                    )
         except Exception as e:
             logger.warning(f"Redis embedding cache failed: {e}")
             raw_redis = None
@@ -293,6 +301,10 @@ class EmbeddingService:
             embeddings = self.model.get_embeddings(x, edge_index)
             embedding = embeddings[0].cpu().numpy()
 
+        if embedding.size != EMBEDDING_DIM:
+            raise ValueError(
+                f"Embedding model returned {embedding.size} values; expected {EMBEDDING_DIM}"
+            )
         return embedding, phishing_prob
 
     def _get_neighbor_features(self, domain: str, depth: int) -> torch.Tensor:
