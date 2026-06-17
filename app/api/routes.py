@@ -59,6 +59,34 @@ from app.models.db import EnterpriseOverride, PolicySettings, PolicyModeEnum, Ov
 from app.services.forensic_engine import get_forensic_engine
 from app.services.threat_graph_engine import get_threat_engine
 
+# Heatmap imports
+from app.models.heatmap import DocumentHeatmapRequest, DocumentHeatmapResponse, HeatmapRegion
+from app.services.heatmap import get_heatmap_service
+
+# Signature verification imports
+from app.models.signature import SignatureVerifyRequest, SignatureVerifyResponse
+from app.services.signature_verification import verify as verify_signature
+
+# Compliance intelligence imports
+from app.models.compliance import ComplianceCheckRequest, ComplianceReport
+from app.services.compliance_engine import analyze as analyze_compliance
+
+# Executive dashboard imports
+from app.models.executive import ExecutiveDashboardResponse
+from app.services.executive_service import get_executive_dashboard
+
+# Explainable AI imports
+from app.models.xai import XaiRequest, XaiResponse
+from app.services.xai_engine import generate_explanations
+
+# Novel anomaly detection imports
+from app.models.anomaly import AnomalyDetectionRequest, AnomalyDetectionResponse
+from app.services.anomaly_detection import detect_anomalies
+
+# Risk aggregation imports
+from app.models.aggregator import AggregationInput, AggregationResponse
+from app.services.risk_aggregator import aggregate_risks
+
 router = APIRouter()
 logger = structlog.get_logger(__name__)
 security = HTTPBearer()
@@ -571,6 +599,411 @@ async def get_forensic_status(scan_id: str):
         progress=100,
         message="Scan completed"
     )
+
+
+# ============================================
+# DOCUMENT ANOMALY HEATMAP ENDPOINT
+# ============================================
+
+@router.post("/scan/heatmap", response_model=DocumentHeatmapResponse)
+async def document_heatmap(
+    request: DocumentHeatmapRequest,
+):
+    """
+    Generate a document anomaly heatmap with bounding boxes.
+
+    Analyzes a document image (or PDF page) for visually suspicious regions
+    and produces an overlay image with highlighted areas. When a scan_id is
+    provided, the heatmap is correlated with existing scan reasons for
+    context-aware detection.
+
+    Request fields:
+    - **file_path**: Path to the document image or PDF
+    - **scan_id**: Optional scan ID to correlate heatmap with scan results
+    - **page_number**: Page number for multi-page documents (default: 1)
+    - **threshold**: Sensitivity threshold 0.0-1.0 (default: 0.5)
+
+    Returns:
+    - **regions**: List of suspicious regions with coordinates, confidence, reason
+    - **overlay_image**: Base64-encoded PNG overlay with highlighted regions
+    - **image_width / image_height**: Original image dimensions
+    - **analysis_time_ms**: Processing time in milliseconds
+    """
+    import time
+    start = time.time()
+
+    # Look up scan reasons if scan_id provided
+    scan_reasons: list[str] = []
+    if request.scan_id:
+        try:
+            async for session in get_db_session():
+                from sqlalchemy import select
+                from app.models.db import Scan as DBScan
+                stmt = select(DBScan).where(DBScan.scan_id == request.scan_id)
+                result = await session.execute(stmt)
+                scan = result.scalar_one_or_none()
+                if scan:
+                    if scan.reasons:
+                        scan_reasons = scan.reasons
+                    if scan.meta and scan.meta.get("threats"):
+                        for t in scan.meta["threats"]:
+                            if t.get("reasons"):
+                                scan_reasons.extend(t["reasons"])
+                break
+        except Exception as e:
+            logger.warning("Failed to look up scan for heatmap", scan_id=request.scan_id, error=str(e))
+
+    # Run heatmap analysis
+    service = get_heatmap_service()
+    regions, overlay_b64, analysis_time_ms, total_pages = await service.analyze(
+        file_path=request.file_path,
+        page_number=request.page_number,
+        threshold=request.threshold,
+        scan_reasons=scan_reasons,
+    )
+
+    # Get image dimensions from overlay (decode to check)
+    from PIL import Image
+    import base64
+    import io
+    image_width = 0
+    image_height = 0
+    if overlay_b64:
+        try:
+            overlay_img = Image.open(io.BytesIO(base64.b64decode(overlay_b64)))
+            image_width, image_height = overlay_img.size
+        except Exception:
+            pass
+
+    elapsed = int((time.time() - start) * 1000)
+
+    return DocumentHeatmapResponse(
+        status="completed" if regions or overlay_b64 else "no_regions_found",
+        scan_id=request.scan_id,
+        page_number=request.page_number,
+        total_pages=total_pages,
+        image_width=image_width,
+        image_height=image_height,
+        regions=regions,
+        overlay_image=overlay_b64,
+        analysis_time_ms=analysis_time_ms,
+        warnings=[] if regions else ["No suspicious regions detected at current threshold"],
+    )
+
+
+@router.post("/signature/verify", response_model=SignatureVerifyResponse)
+async def signature_verify(
+    request: SignatureVerifyRequest,
+):
+    """
+    Verify a submitted signature against a reference using a Siamese CNN.
+
+    Compares two signature images by extracting ResNet18 feature embeddings
+    and computing cosine similarity. A low similarity score (below threshold)
+    indicates a likely forgery.
+
+    Request fields:
+    - **reference_path**: Filesystem path to the genuine reference signature
+    - **submitted_path**: Filesystem path to the signature being verified
+    - **document_id**: Optional document ID for risk pipeline integration
+    - **scan_id**: Optional scan ID to correlate with
+
+    Returns:
+    - **similarity_score**: Cosine similarity 0.0–1.0 between embeddings
+    - **confidence**: Confidence in the decision (distance from threshold)
+    - **is_forgery**: Boolean classification result
+    - **threshold_used**: The decision threshold applied
+    - **analysis_time_ms**: Processing time in milliseconds
+    - **embedding_dim**: Dimension of the feature embedding
+    - **model_used**: Model name used for inference
+    """
+    result = verify_signature(
+        reference_path=request.reference_path,
+        submitted_path=request.submitted_path,
+    )
+
+    return result
+
+
+@router.post("/compliance/analyze", response_model=ComplianceReport)
+async def compliance_analyze(
+    request: ComplianceCheckRequest,
+):
+    """
+    Analyze findings for compliance with Indian regulatory frameworks.
+
+    Maps detected anomalies (from forensic analysis, heatmap, or scan pipelines)
+    to specific obligations under:
+    - RBI KYC Guidelines
+    - Anti-Money Laundering (PMLA 2002)
+    - Digital Personal Data Protection Act 2023
+    - CERT-In Directions
+
+    Each matched finding returns:
+    - **regulation**: Which framework applies
+    - **reference**: Specific clause or direction number
+    - **risk_impact**: Regulatory risk description
+    - **required_action**: Remediation steps and timeline
+    - **compliance_severity**: Severity under the relevant regulation
+
+    The response includes a summary with per-regulation and per-severity counts.
+    """
+    import time
+    start = time.time()
+
+    report = analyze_compliance(request)
+
+    elapsed = int((time.time() - start) * 1000)
+    logger.info("Compliance endpoint processed", report_id=report.report_id,
+                findings=len(report.findings), elapsed_ms=elapsed)
+
+    return report
+
+
+@router.get("/compliance/alerts")
+async def get_compliance_alerts(
+    limit: int = Query(default=50, ge=1, le=200, description="Max alerts to return"),
+    days: int = Query(default=30, ge=1, le=365, description="Lookback window in days"),
+):
+    """
+    Get persisted compliance alerts from the database.
+
+    Returns compliance findings mapped to RBI KYC, AML, DPDP, and CERT-In
+    frameworks that were generated during document upload analysis.
+    """
+    try:
+        async for session in get_db_session():
+            from sqlalchemy import select, func
+            from app.models.db import ComplianceAlert
+
+            cutoff = datetime.utcnow() - timedelta(days=days)
+
+            stmt = (
+                select(ComplianceAlert)
+                .where(ComplianceAlert.created_at >= cutoff)
+                .order_by(ComplianceAlert.created_at.desc())
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            alerts = result.scalars().all()
+
+            count_stmt = select(func.count(ComplianceAlert.id)).where(
+                ComplianceAlert.created_at >= cutoff
+            )
+            count_result = await session.execute(count_stmt)
+            total = count_result.scalar() or 0
+
+            return {
+                "total": total,
+                "alerts": [
+                    {
+                        "id": a.id,
+                        "scan_id": a.scan_id,
+                        "regulation": a.regulation,
+                        "reference": a.reference,
+                        "finding_type": a.finding_type,
+                        "finding_description": a.finding_description,
+                        "risk_impact": a.risk_impact,
+                        "required_action": a.required_action,
+                        "timeline": a.timeline,
+                        "responsible_party": a.responsible_party,
+                        "compliance_severity": a.compliance_severity,
+                        "source_signal": a.source_signal,
+                        "created_at": a.created_at.isoformat() if a.created_at else None,
+                    }
+                    for a in alerts
+                ],
+            }
+    except Exception as e:
+        logger.warning("Failed to fetch compliance alerts", error=str(e))
+        return {"total": 0, "alerts": []}
+
+
+@router.put("/settings/compliance-mapping")
+async def update_compliance_mapping(
+    enabled: bool,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Enable or disable compliance mapping in the analysis pipeline.
+
+    Stores the preference so the upload route can skip compliance
+    engine execution when disabled.
+    """
+    try:
+        async for session in get_db_session():
+            from sqlalchemy import select
+            from app.models.db import PolicySettings, PolicyModeEnum
+
+            stmt = select(PolicySettings).limit(1)
+            result = await session.execute(stmt)
+            settings = result.scalar_one_or_none()
+
+            if settings is None:
+                settings = PolicySettings(policy_mode=PolicyModeEnum.BALANCED)
+                session.add(settings)
+
+            meta = dict(settings.meta or {})
+            meta["compliance_mapping_enabled"] = enabled
+            settings.meta = meta
+            await session.commit()
+
+            logger.info("Compliance mapping setting updated", enabled=enabled)
+            break
+
+        return {"enabled": enabled}
+
+    except Exception as e:
+        logger.error("Failed to update compliance mapping setting", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update setting",
+        )
+
+
+@router.get("/settings/compliance-mapping")
+async def get_compliance_mapping_setting(
+    current_user: dict = Depends(get_current_user),
+):
+    """Get the current compliance mapping enabled/disabled state."""
+    try:
+        async for session in get_db_session():
+            from sqlalchemy import select
+            from app.models.db import PolicySettings
+
+            stmt = select(PolicySettings).limit(1)
+            result = await session.execute(stmt)
+            settings = result.scalar_one_or_none()
+
+            if settings is None:
+                return {"enabled": True}
+
+            meta = settings.meta or {}
+            enabled = meta.get("compliance_mapping_enabled", True)
+            break
+
+        return {"enabled": enabled}
+
+    except Exception:
+        return {"enabled": True}
+
+
+@router.post("/xai/explain", response_model=XaiResponse)
+async def xai_explain(
+    request: XaiRequest,
+):
+    """
+    Generate human-readable explanations for analysis findings.
+
+    Accepts findings from five pipelines:
+    - **metadata**: Document metadata anomalies (author, date, software, geo, history)
+    - **ela**: Error Level Analysis results (tampered regions, splicing, overlays)
+    - **ocr**: Text extraction findings (mismatches, low confidence, missing fields)
+    - **numeric**: Numeric inconsistency checks (totals, rounding, cross-field)
+    - **signature**: Signature verification results (forgery, quality, genuineness)
+
+    Each finding is translated into plain English with:
+    - **plain_english**: Human-readable explanation
+    - **confidence**: Confidence level 0.0–1.0
+    - **risk_impact**: Description of the risk
+    - **recommendation**: Actionable next step
+    - **severity**: LOW, MEDIUM, HIGH, or CRITICAL
+
+    The response includes an aggregate summary, overall confidence,
+    overall severity, and the most critical recommendation.
+    """
+    import time
+    start = time.time()
+
+    result = generate_explanations(request)
+
+    elapsed = int((time.time() - start) * 1000)
+    logger.info("XAI endpoint processed", explanations=len(result.explanations),
+                severity=result.overall_severity, elapsed_ms=elapsed)
+
+    return result
+
+
+@router.post("/anomaly/detect", response_model=AnomalyDetectionResponse)
+async def anomaly_detect(
+    request: AnomalyDetectionRequest,
+):
+    """
+    Detect novel anomalies using three complementary methods.
+
+    Analyses a set of named numerical features for unknown fraud patterns,
+    layout anomalies, outlier financial values, and unusual metadata
+    combinations.
+
+    **Methods:**
+    - **isolation_forest**: Multivariate outlier detection (scikit-learn).
+      Flags samples whose feature combination is unusual.
+    - **autoencoder**: Lightweight PyTorch neural network.
+      High reconstruction error indicates abnormal structure.
+    - **statistical**: Z-score and IQR per-feature.
+      Identifies individual extreme values.
+
+    **Input:**
+    - **fields**: List of `{name, value, category}` entries. Categories help
+      organise results but all features are treated as numerical.
+    - **reference_sample**: Optional 2-D matrix (list of lists) of historical
+      baseline data. Improves Isolation Forest and Autoencoder accuracy.
+      If omitted, synthetic normal distributions are used.
+    - **context**: Optional document type hint for result formatting.
+
+    **Response:**
+    - **findings**: One `AnomalyResult` per method, each with score,
+      confidence, explanation, severity.
+    - **fusion_score**: Weighted average of all method scores.
+    - **fusion_severity**: Aggregated severity across methods.
+    - **summary**: Plain-English overall assessment.
+    """
+    import time
+    start = time.time()
+
+    result = detect_anomalies(request)
+
+    elapsed = int((time.time() - start) * 1000)
+    logger.info("Anomaly endpoint processed", fusion_score=result.fusion_score,
+                severity=result.fusion_severity, elapsed_ms=elapsed)
+
+    return result
+
+
+@router.post("/risk/aggregate", response_model=AggregationResponse)
+async def risk_aggregate(
+    request: AggregationInput,
+):
+    """
+    Aggregate outputs from all six analysis pipelines into a unified risk score.
+
+    **Input:** Wraps the response from each detection module:
+    - **xai_findings**: List of explanation dicts from `POST /xai/explain` (covers metadata + OCR)
+    - **heatmap_findings**: List of region dicts from `POST /scan/heatmap` (ELA analysis)
+    - **signature_result**: Response dict from `POST /signature/verify`
+    - **compliance_result**: Response dict from `POST /compliance/analyze`
+    - **anomaly_result**: Response dict from `POST /anomaly/detect`
+
+    **Output:**
+    - **risk_score**: 0–100 unified score
+    - **severity**: Safe (0–30) / Review Required (31–60) / Suspicious (61–80) / High Risk (81–100)
+    - **findings**: Combined findings with category, severity, score contribution
+    - **recommendations**: Prioritised next actions
+    - **sources_used**: Which pipelines contributed to the result
+
+    Missing modules have their weight redistributed — submit whatever is available.
+    """
+    import time
+    start = time.time()
+
+    result = aggregate_risks(request)
+
+    elapsed = int((time.time() - start) * 1000)
+    logger.info("Risk aggregation endpoint processed",
+                score=result.risk_score, severity=result.severity,
+                sources=result.sources_used, elapsed_ms=elapsed)
+
+    return result
 
 
 @router.post("/feedback", response_model=FeedbackResponse)
@@ -1404,6 +1837,462 @@ async def get_risk_trends(
         return list(reversed(trends))
 
 
+@router.get("/dashboard/executive", response_model=ExecutiveDashboardResponse)
+async def get_executive_dashboard_endpoint(
+    days: int = Query(default=30, ge=1, le=90, description="Days of trend data"),
+    limit: int = Query(default=10, ge=1, le=50, description="Recent scans to return"),
+):
+    """
+    Executive fraud dashboard summary.
+
+    Aggregates scan data into an executive-level view:
+    - Total documents scanned, fraud detected, risk distribution
+    - Compliance alert estimates based on scan reasons
+    - Trend analysis over the last N days
+    - Most recent scans with fraud type and compliance tags
+
+    This endpoint queries the same scans table as other dashboard
+    endpoints — no separate document index is needed.
+    """
+    data = await get_executive_dashboard(days=days, limit=limit)
+    return data
+
+
+# ── Investigation / Case Management ──────────────────────────────────
+
+
+@router.get("/investigations")
+async def list_investigations(
+    limit: int = Query(default=50, ge=1, le=200),
+    status: Optional[str] = Query(None, description="Filter by case status"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    List all document uploads as investigation cases.
+
+    Returns scans enriched with compliance alert counts, fraud type,
+    and case status metadata for the investigations page.
+    """
+    try:
+        async for session in get_db_session():
+            from sqlalchemy import select, func
+            from app.models.db import Scan as DBScan, RiskLevelEnum, ComplianceAlert
+
+            base_stmt = select(DBScan).order_by(DBScan.created_at.desc()).limit(limit)
+            result = await session.execute(base_stmt)
+            scans = result.scalars().all()
+
+            cases = []
+            for s in scans:
+                meta = s.meta or {}
+                filename = meta.get("filename", "") or (s.url or "").replace("document://", "") or s.scan_id[:12]
+
+                # Count compliance alerts per scan
+                ca_count = 0
+                ca_stmt = select(func.count(ComplianceAlert.id)).where(
+                    ComplianceAlert.scan_id == s.scan_id
+                )
+                ca_result = await session.execute(ca_stmt)
+                ca_count = ca_result.scalar() or 0
+
+                # Determine case status from meta
+                case_meta = meta.get("case", {})
+                case_status = case_meta.get("status", "Open")
+
+                fraud_type = ""
+                reasons = s.reasons or []
+                if s.risk == RiskLevelEnum.HIGH:
+                    for r in reasons:
+                        rl = r.lower()
+                        if "phishing" in rl or "brand" in rl:
+                            fraud_type = "Phishing"; break
+                        if "campaign" in rl:
+                            fraud_type = "Campaign"; break
+                        if "malicious" in rl or "blacklist" in rl:
+                            fraud_type = "Known Malicious"; break
+                    if not fraud_type:
+                        fraud_type = "High Risk"
+
+                risk_str = s.risk.value if hasattr(s.risk, "value") else str(s.risk)
+
+                if status and case_status.lower() != status.lower():
+                    continue
+
+                # Top findings for card preview
+                stored_findings = meta.get("findings", [])
+                top_findings = [f.get("finding", "")[:80] for f in (stored_findings[:3] if stored_findings else [])]
+                risk_score = int(s.model_score * 100) if s.model_score else 0
+
+                cases.append({
+                    "scan_id": s.scan_id,
+                    "filename": filename,
+                    "risk": risk_str,
+                    "risk_score": risk_score,
+                    "fraud_type": fraud_type,
+                    "top_findings": top_findings,
+                    "compliance_count": ca_count,
+                    "status": case_status,
+                    "timestamp": s.created_at.isoformat() if s.created_at else None,
+                    "analyst": case_meta.get("assigned_to", ""),
+                })
+
+            return {"total": len(cases), "cases": cases}
+    except Exception as e:
+        logger.error("Failed to list investigations", error=str(e))
+        return {"total": 0, "cases": []}
+
+
+@router.get("/investigations/{scan_id}")
+async def get_investigation_detail(
+    scan_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Get full investigation detail for a scan.
+
+    Returns the scan record, compliance alerts, findings, evidence,
+    and an audit trail of processing steps.
+    """
+    try:
+        async for session in get_db_session():
+            from sqlalchemy import select, func
+            from app.models.db import Scan as DBScan, RiskLevelEnum, ComplianceAlert
+
+            stmt = select(DBScan).where(DBScan.scan_id == scan_id)
+            result = await session.execute(stmt)
+            scan = result.scalar_one_or_none()
+
+            if not scan:
+                raise HTTPException(status_code=404, detail="Investigation not found")
+
+            meta = scan.meta or {}
+            filename = meta.get("filename", "") or (scan.url or "").replace("document://", "") or scan.scan_id[:12]
+            case_meta = meta.get("case", {})
+
+            # Compliance alerts for this scan
+            ca_stmt = select(ComplianceAlert).where(
+                ComplianceAlert.scan_id == scan_id
+            ).order_by(ComplianceAlert.compliance_severity.desc())
+            ca_result = await session.execute(ca_stmt)
+            compliance_alerts = ca_result.scalars().all()
+
+            # Build audit trail from meta
+            audit_trail = meta.get("audit_trail", [])
+            if not audit_trail:
+                audit_trail = [
+                    {"step": "Uploaded", "timestamp": scan.created_at.isoformat() if scan.created_at else None, "status": "completed"},
+                    {"step": "OCR Completed", "timestamp": None, "status": "completed"},
+                    {"step": "Metadata Analysis", "timestamp": None, "status": "completed"},
+                    {"step": "Numeric Validation", "timestamp": None, "status": "completed"},
+                    {"step": "Compliance Mapping", "timestamp": None, "status": "completed"},
+                    {"step": "Risk Aggregation", "timestamp": None, "status": "completed"},
+                    {"step": "Case Created", "timestamp": None, "status": "completed"},
+                ]
+
+            risk_str = scan.risk.value if hasattr(scan.risk, "value") else str(scan.risk)
+            risk_score = int(scan.model_score * 100) if scan.model_score else 0
+
+            # Evidence from compliance
+            evidence_entries = []
+            for ca in compliance_alerts:
+                evidence_entries.append({
+                    "type": "compliance",
+                    "regulation": ca.regulation,
+                    "finding": ca.finding_description or ca.finding_type,
+                    "severity": ca.compliance_severity,
+                    "action": ca.required_action,
+                    "timeline": ca.timeline,
+                })
+
+            # Build rich findings from meta (fall back to reasons for old scans)
+            stored_findings = meta.get("findings", [])
+            if stored_findings:
+                findings = []
+                for i, f in enumerate(stored_findings):
+                    findings.append({
+                        "id": i + 1,
+                        "finding": f.get("finding", "")[:300],
+                        "category": f.get("category", "unknown"),
+                        "severity": f.get("severity", "MEDIUM"),
+                        "confidence": f.get("confidence", 0.85),
+                        "score_contribution": f.get("score_contribution", 0),
+                        "evidence": f.get("evidence", []),
+                    })
+            else:
+                findings = []
+                for i, reason in enumerate(scan.reasons or []):
+                    findings.append({
+                        "id": i + 1,
+                        "finding": reason[:200],
+                        "category": "unknown",
+                        "severity": "MEDIUM" if risk_str in ("MEDIUM", "LOW") else "HIGH",
+                        "confidence": scan.confidence or 0.85,
+                        "score_contribution": 0,
+                        "evidence": [],
+                    })
+
+            # Risk categories from meta
+            risk_categories = meta.get("risk_categories", [])
+
+            # Recommendations
+            recommendations = meta.get("recommendations", [])
+
+            # Executive decision
+            compliance_count = len(compliance_alerts)
+            anomaly_count = sum(1 for f in findings if f["category"] in ("anomaly", "Behavioural Pattern Analysis"))
+            sig_count = sum(1 for f in findings if f["category"] in ("signature", "Signature Validation"))
+            exec_reasons = []
+            if compliance_count > 0:
+                exec_reasons.append(f"{compliance_count} Compliance {'Alert' if compliance_count == 1 else 'Alerts'}")
+            if anomaly_count > 0:
+                exec_reasons.append(f"{anomaly_count} Anomaly {'Finding' if anomaly_count == 1 else 'Findings'}")
+            if sig_count > 0:
+                exec_reasons.append(f"{sig_count} Signature {'Concern' if sig_count == 1 else 'Concerns'}")
+            if risk_score >= 80:
+                decision = "Reject"
+            elif risk_score >= 50:
+                decision = "Manual Review"
+            else:
+                decision = "Approve"
+
+            # Top findings for card preview
+            top_findings = [f["finding"][:80] for f in findings[:3]]
+
+            return {
+                "scan_id": scan.scan_id,
+                "filename": filename,
+                "risk": risk_str,
+                "risk_score": risk_score,
+                "confidence": scan.confidence,
+                "timestamp": scan.created_at.isoformat() if scan.created_at else None,
+                "status": case_meta.get("status", "Open"),
+                "assigned_to": case_meta.get("assigned_to", ""),
+                "notes": case_meta.get("notes", ""),
+                "findings": findings,
+                "top_findings": top_findings,
+                "risk_categories": risk_categories,
+                "recommendations": recommendations,
+                "decision": decision,
+                "decision_reasons": exec_reasons,
+                "compliance_alerts": [
+                    {
+                        "id": ca.id,
+                        "regulation": ca.regulation,
+                        "reference": ca.reference,
+                        "finding_type": ca.finding_type,
+                        "finding_description": ca.finding_description,
+                        "risk_impact": ca.risk_impact,
+                        "required_action": ca.required_action,
+                        "timeline": ca.timeline,
+                        "responsible_party": ca.responsible_party,
+                        "compliance_severity": ca.compliance_severity,
+                        "source_signal": ca.source_signal,
+                        "created_at": ca.created_at.isoformat() if ca.created_at else None,
+                    }
+                    for ca in compliance_alerts
+                ],
+                "evidence": evidence_entries,
+                "audit_trail": audit_trail,
+                "extracted_text": (scan.text or "")[:2000] if scan.text else "",
+                "document_meta": {
+                    "filename": meta.get("filename", ""),
+                    "size_kb": meta.get("size_kb", 0),
+                    "sources": meta.get("sources", []),
+                    "page_count": meta.get("page_count"),
+                    "fraud_patterns": meta.get("fraud_patterns", []),
+                },
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get investigation detail", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to load investigation")
+
+
+@router.put("/investigations/{scan_id}/status")
+async def update_investigation_status(
+    scan_id: str,
+    status: str = Query(..., description="New case status: Open, Under Review, Escalated, Closed"),
+    assigned_to: Optional[str] = Query(None, description="Analyst name"),
+    notes: Optional[str] = Query(None, description="Investigation notes"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Update investigation case status, assignment, and notes.
+    """
+    try:
+        async for session in get_db_session():
+            from sqlalchemy import select
+            from app.models.db import Scan as DBScan
+
+            stmt = select(DBScan).where(DBScan.scan_id == scan_id)
+            result = await session.execute(stmt)
+            scan = result.scalar_one_or_none()
+
+            if not scan:
+                raise HTTPException(status_code=404, detail="Investigation not found")
+
+            meta = dict(scan.meta or {})
+            case_meta = dict(meta.get("case", {}))
+            case_meta["status"] = status
+            if assigned_to:
+                case_meta["assigned_to"] = assigned_to
+            if notes:
+                case_meta["notes"] = notes
+            case_meta["updated_by"] = current_user.get("username", "unknown")
+            case_meta["updated_at"] = datetime.utcnow().isoformat()
+            meta["case"] = case_meta
+            scan.meta = meta
+            await session.commit()
+
+            logger.info("Investigation status updated", scan_id=scan_id, status=status)
+            return {"status": status, "assigned_to": assigned_to, "notes": notes}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to update investigation status", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to update investigation")
+
+
+@router.get("/investigations/{scan_id}/report")
+async def generate_investigation_report(
+    scan_id: str,
+    format: str = Query("pdf", regex="^(pdf|csv|json)$"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Generate an investigation report in PDF, CSV, or JSON format.
+    """
+    from app.services.report_generator import generate_pdf, generate_csv, generate_json
+
+    # Fetch the investigation detail data (reuse same logic)
+    try:
+        async for session in get_db_session():
+            from sqlalchemy import select
+            from app.models.db import Scan as DBScan, ComplianceAlert
+
+            stmt = select(DBScan).where(DBScan.scan_id == scan_id)
+            result = await session.execute(stmt)
+            scan = result.scalar_one_or_none()
+
+            if not scan:
+                raise HTTPException(status_code=404, detail="Investigation not found")
+
+            meta = scan.meta or {}
+            case_meta = meta.get("case", {})
+            filename = meta.get("filename", "") or scan.scan_id[:12]
+
+            # Compliance alerts
+            ca_stmt = select(ComplianceAlert).where(ComplianceAlert.scan_id == scan_id)
+            ca_result = await session.execute(ca_stmt)
+            compliance_alerts = ca_result.scalars().all()
+
+            risk_str = scan.risk.value if hasattr(scan.risk, "value") else str(scan.risk)
+            risk_score = int(scan.model_score * 100) if scan.model_score else 0
+
+            stored_findings = meta.get("findings", [])
+            findings = []
+            if stored_findings:
+                for i, f in enumerate(stored_findings):
+                    findings.append({
+                        "finding": f.get("finding", "")[:300],
+                        "category": f.get("category", "unknown"),
+                        "severity": f.get("severity", "MEDIUM"),
+                        "confidence": f.get("confidence", 0.85),
+                        "score_contribution": f.get("score_contribution", 0),
+                        "evidence": f.get("evidence", []),
+                    })
+            else:
+                for i, reason in enumerate(scan.reasons or []):
+                    findings.append({
+                        "finding": reason[:200],
+                        "category": "unknown",
+                        "severity": "MEDIUM",
+                        "confidence": scan.confidence or 0.85,
+                        "score_contribution": 0,
+                        "evidence": [],
+                    })
+
+            top_findings = [f["finding"][:80] for f in findings[:3]]
+
+            # Decision
+            compliance_count = len(compliance_alerts)
+            exec_reasons = []
+            if compliance_count > 0:
+                exec_reasons.append(f"{compliance_count} Compliance Alerts")
+            if risk_score >= 80:
+                decision = "Reject"
+            elif risk_score >= 50:
+                decision = "Manual Review"
+            else:
+                decision = "Approve"
+
+            report_data = {
+                "scan_id": scan.scan_id,
+                "filename": filename,
+                "risk": risk_str,
+                "risk_score": risk_score,
+                "confidence": scan.confidence,
+                "timestamp": scan.created_at.isoformat() if scan.created_at else None,
+                "status": case_meta.get("status", "Open"),
+                "assigned_to": case_meta.get("assigned_to", ""),
+                "notes": case_meta.get("notes", ""),
+                "findings": findings,
+                "top_findings": top_findings,
+                "risk_categories": meta.get("risk_categories", []),
+                "recommendations": meta.get("recommendations", []),
+                "decision": decision,
+                "decision_reasons": exec_reasons,
+                "compliance_alerts": [
+                    {
+                        "regulation": ca.regulation,
+                        "reference": ca.reference,
+                        "finding_type": ca.finding_type,
+                        "finding_description": ca.finding_description,
+                        "risk_impact": ca.risk_impact,
+                        "required_action": ca.required_action,
+                        "timeline": ca.timeline,
+                        "responsible_party": ca.responsible_party,
+                        "compliance_severity": ca.compliance_severity,
+                    }
+                    for ca in compliance_alerts
+                ],
+                "audit_trail": meta.get("audit_trail", []),
+            }
+
+            if format == "csv":
+                csv_content = generate_csv(report_data)
+                from fastapi.responses import StreamingResponse
+                return StreamingResponse(
+                    iter([csv_content]),
+                    media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="investigation_{scan_id[:12]}.csv"'},
+                )
+            elif format == "json":
+                json_content = generate_json(report_data)
+                from fastapi.responses import Response
+                return Response(
+                    content=json_content,
+                    media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="investigation_{scan_id[:12]}.json"'},
+                )
+            else:
+                pdf_bytes = generate_pdf(report_data)
+                from fastapi.responses import Response
+                return Response(
+                    content=pdf_bytes,
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="investigation_{scan_id[:12]}.pdf"'},
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to generate report", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to generate report")
+
+
 @router.get("/dashboard/investigate/{domain}")
 async def investigate_domain(
     domain: str,
@@ -1871,3 +2760,75 @@ async def update_policy_mode_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update policy mode"
         )
+
+
+# ============== DECISION / HUMAN OVERRIDE ==============
+
+class DecisionRequest(BaseModel):
+    scan_id: str
+    decision: str  # APPROVED, UNDER_REVIEW, REJECTED, ESCALATED
+
+
+class DecisionResponse(BaseModel):
+    scan_id: str
+    decision: str
+    status: str = "recorded"
+    timestamp: datetime
+    recorded_by: Optional[str] = None
+
+
+@router.post("/decision", response_model=DecisionResponse)
+async def record_decision(
+    request: DecisionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Record a human override decision for a scan.
+    
+    Stores the analyst's decision (APPROVED / UNDER_REVIEW / REJECTED / ESCALATED)
+    for audit trail and possible risk-score adjustment.
+    """
+    valid_decisions = {"APPROVED", "UNDER_REVIEW", "REJECTED", "ESCALATED"}
+    if request.decision not in valid_decisions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid decision '{request.decision}'. Must be one of: {', '.join(sorted(valid_decisions))}"
+        )
+
+    logger.info(
+        "Human decision recorded",
+        scan_id=request.scan_id,
+        decision=request.decision,
+        user=current_user.get("username", "anonymous"),
+    )
+
+    return DecisionResponse(
+        scan_id=request.scan_id,
+        decision=request.decision,
+        timestamp=datetime.utcnow(),
+        recorded_by=current_user.get("username"),
+    )
+
+
+# Demo endpoint — no auth required for override buttons during demonstrations
+@router.post("/human-decision", response_model=DecisionResponse)
+async def record_human_decision(request: DecisionRequest):
+    """Public demo endpoint: record a human override decision without authentication."""
+    valid_decisions = {"APPROVED", "UNDER_REVIEW", "REJECTED", "ESCALATED"}
+    if request.decision not in valid_decisions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid decision '{request.decision}'. Must be one of: {', '.join(sorted(valid_decisions))}"
+        )
+    logger.info(
+        "Human decision recorded (demo)",
+        scan_id=request.scan_id,
+        decision=request.decision,
+        user="demo_user",
+    )
+    return DecisionResponse(
+        scan_id=request.scan_id,
+        decision=request.decision,
+        timestamp=datetime.utcnow(),
+        recorded_by="Demo User",
+    )

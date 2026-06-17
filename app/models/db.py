@@ -199,14 +199,47 @@ class PolicySettings(Base):
     System-wide policy settings for enforcement.
     
     Stores the current policy mode that determines how detection
-    results are translated into blocking decisions.
+    results are translated into blocking decisions, plus feature
+    toggle flags (e.g. compliance_mapping_enabled) in meta JSONB.
     """
     __tablename__ = "policy_settings"
     
     id = Column(Integer, primary_key=True)
     policy_mode = Column(SQLEnum(PolicyModeEnum), default=PolicyModeEnum.BALANCED, nullable=False)
+    meta = Column(JSON, default=dict)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = Column(String(128), nullable=True)
+
+
+class ComplianceAlert(Base):
+    """
+    Compliance alerts generated from regulatory mapping.
+    
+    Stores findings from the compliance engine mapped to:
+    - RBI KYC Guidelines
+    - Anti-Money Laundering (PMLA 2002)
+    - Digital Personal Data Protection Act 2023
+    - CERT-In Directions
+    """
+    __tablename__ = "compliance_alerts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(String(64), ForeignKey("scans.scan_id"), nullable=True, index=True)
+    regulation = Column(String(128), nullable=False)
+    reference = Column(String(256), nullable=False)
+    finding_type = Column(String(128), nullable=False)
+    finding_description = Column(Text, nullable=True)
+    risk_impact = Column(Text, nullable=True)
+    required_action = Column(Text, nullable=True)
+    timeline = Column(String(256), nullable=True)
+    responsible_party = Column(String(128), nullable=True)
+    compliance_severity = Column(String(20), nullable=False)
+    source_signal = Column(String(256), nullable=True)
+    report_id = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Relationships
+    scan = relationship("Scan", backref="compliance_alerts")
 
 
 # Define indexes for performance
@@ -215,3 +248,7 @@ Index('idx_scans_risk', Scan.risk)
 Index('idx_domains_risk_score', Domain.risk_score.desc())
 Index('idx_relations_type', Relation.relation_type)
 Index('idx_overrides_domain', EnterpriseOverride.domain)
+Index('idx_compliance_scan_id', ComplianceAlert.scan_id)
+Index('idx_compliance_severity', ComplianceAlert.compliance_severity)
+Index('idx_compliance_regulation', ComplianceAlert.regulation)
+Index('idx_compliance_created_at', ComplianceAlert.created_at.desc())

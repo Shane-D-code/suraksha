@@ -51,6 +51,19 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
+    # Ensure policy_settings has meta column (migration for existing databases)
+    try:
+        from sqlalchemy import inspect
+        def _add_meta_column(sync_conn):
+            inspector = inspect(sync_conn)
+            columns = [c['name'] for c in inspector.get_columns('policy_settings')]
+            if 'meta' not in columns:
+                from sqlalchemy import text as sa_text
+                sync_conn.execute(sa_text('ALTER TABLE policy_settings ADD COLUMN meta JSONB DEFAULT \'{}\'::jsonb'))
+        await conn.run_sync(_add_meta_column)
+    except Exception:
+        pass
+    
     # Create asyncpg pool for services that need it
     dsn = settings.DATABASE_URL.replace("+asyncpg", "")
     db_pool = await asyncpg.create_pool(dsn)

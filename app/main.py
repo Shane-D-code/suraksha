@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import structlog
 
@@ -18,6 +19,8 @@ from app.config import settings
 from app.api.routes import router as api_router
 from app.api.forensic_routes import router as forensic_router
 from app.api.realtime_routes import router as realtime_router
+from app.api.upload_route import router as upload_router
+from app.frontend_router import router as frontend_router
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.services.database import init_db, close_db
 from app.services.redis import init_redis, close_redis, get_redis_client
@@ -184,6 +187,11 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(api_router, prefix=settings.API_PREFIX)
 app.include_router(forensic_router, prefix=settings.API_PREFIX)
 app.include_router(realtime_router, prefix=settings.API_PREFIX)
+app.include_router(upload_router, prefix=settings.API_PREFIX)
+
+# Mount static files and frontend SPA router
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.include_router(frontend_router)
 
 
 @app.get("/")

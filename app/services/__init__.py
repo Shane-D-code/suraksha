@@ -17,6 +17,14 @@ from app.services.threat_feeds import (
     PhishTankFeed,
 )
 
+from app.services.intel_cache_service import (
+    IntelCacheService,
+    IntelligenceMode,
+    get_intel_cache,
+    BANK_RULES,
+    TEMPLATE_SOURCES,
+)
+
 __all__ = [
     # Database
     "get_db_session",
@@ -43,4 +51,10 @@ __all__ = [
     "OpenPhishFeed",
     "URLhausFeed",
     "PhishTankFeed",
+    # Intel Cache Service
+    "IntelCacheService",
+    "IntelligenceMode",
+    "get_intel_cache",
+    "BANK_RULES",
+    "TEMPLATE_SOURCES",
 ]

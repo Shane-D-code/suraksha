@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PhishGuard Nexus — Enterprise Fraud Intelligence</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Geist:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+tailwind.config = {
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        "secondary": "#adc6ff",
+        "primary-fixed-dim": "#4cd7f6",
+        "on-primary": "#003640",
+        "surface-tint": "#4cd7f6",
+        "on-primary-fixed-variant": "#004e5c",
+        "on-surface": "#dee3e6",
+        "secondary-fixed-dim": "#adc6ff",
+        "primary-container": "#06b6d4",
+        "surface-container-lowest": "#090f11",
+        "outline-variant": "#3d494c",
+        "on-secondary": "#002e6a",
+        "on-error-container": "#ffdad6",
+        "on-surface-variant": "#bcc9cd",
+        "outline": "#869397",
+        "error": "#ffb4ab",
+        "inverse-on-surface": "#2b3133",
+        "on-secondary-fixed-variant": "#004395",
+        "on-tertiary-container": "#00452e",
+        "tertiary-fixed": "#6ffbbe",
+        "secondary-fixed": "#d8e2ff",
+        "surface-container-highest": "#303638",
+        "surface-variant": "#303638",
+        "surface-bright": "#343a3c",
+        "inverse-primary": "#00687a",
+        "tertiary-container": "#1bbd85",
+        "on-tertiary-fixed-variant": "#005236",
+        "error-container": "#93000a",
+        "surface-container-high": "#252b2d",
+        "on-background": "#dee3e6",
+        "on-tertiary": "#003824",
+        "tertiary-fixed-dim": "#4edea3",
+        "on-tertiary-fixed": "#002113",
+        "inverse-surface": "#dee3e6",
+        "primary": "#4cd7f6",
+        "on-error": "#690005",
+        "secondary-container": "#0566d9",
+        "surface": "#0e1416",
+        "on-primary-fixed": "#001f26",
+        "background": "#0e1416",
+        "primary-fixed": "#acedff",
+        "on-secondary-fixed": "#001a42",
+        "surface-container": "#1b2122",
+        "surface-dim": "#0e1416",
+        "on-secondary-container": "#e6ecff",
+        "on-primary-container": "#00424f",
+        "surface-container-low": "#171d1e",
+        "tertiary": "#4edea3"
+      },
+      borderRadius: { DEFAULT: "0.125rem", lg: "0.25rem", xl: "0.5rem", full: "0.75rem" },
+      spacing: { gutter: "24px", unit: "4px", "margin-desktop": "40px", "margin-mobile": "16px", "container-max": "1600px" },
+      fontFamily: {
+        "body-lg": ["Inter"],
+        "label-caps": ["Inter"],
+        "display-lg": ["Geist"],
+        "headline-lg": ["Geist"],
+        "body-sm": ["Inter"],
+        "code-sm": ["JetBrains Mono"],
+        "title-md": ["Geist"]
+      },
+      fontSize: {
+        "body-lg": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
+        "label-caps": ["11px", { lineHeight: "1", letterSpacing: "0.1em", fontWeight: "700" }],
+        "display-lg": ["48px", { lineHeight: "1.1", letterSpacing: "-0.04em", fontWeight: "700" }],
+        "headline-lg": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
+        "body-sm": ["14px", { lineHeight: "1.5", fontWeight: "400" }],
+        "code-sm": ["12px", { lineHeight: "1.4", letterSpacing: "0.02em", fontWeight: "500" }],
+        "title-md": ["20px", { lineHeight: "1.4", fontWeight: "500" }]
+      }
+    }
+  }
+};
+</script>
+<style>
+  .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  body { background-color: #020617; color: #dee3e6; overflow-x: hidden; }
+  .glass-panel { background: rgba(11, 17, 32, 0.8); backdrop-filter: blur(24px); border: 1px solid rgba(255, 255, 255, 0.08); }
+  .neon-glow-primary { box-shadow: 0 0 40px rgba(76, 215, 246, 0.1); }
+  .status-glow-red { border-top: 2px solid #ffb4ab; }
+  .status-glow-cyan { border-top: 2px solid #4cd7f6; }
+  .status-glow-green { border-top: 2px solid #4edea3; }
+  @keyframes scan-line { 0% { transform: translateY(-100%); } 100% { transform: translateY(1000%); } }
+  .scanning-line { height: 2px; background: linear-gradient(90deg, transparent, #4cd7f6, transparent); animation: scan-line 3s linear infinite; }
+  @keyframes pulse-border { 0%,100% { border-color: rgba(76, 215, 246, 0.2); } 50% { border-color: rgba(76, 215, 246, 0.6); } }
+  .pulse-border { animation: pulse-border 2s infinite; }
+  .page-section { display: none; }
+  .page-section.active { display: block; }
+  .toast { position: fixed; top: 1.5rem; right: 1.5rem; z-index: 9999; padding: 0.85rem 1.25rem; border-radius: 0.5rem; font-size: 0.85rem; font-weight: 500; backdrop-filter: blur(16px); border: 1px solid; animation: slideInRight 0.3s ease-out; min-width: 280px; display: flex; align-items: center; gap: 0.75rem; }
+  .toast.success { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.3); color: #4edea3; }
+  .toast.error { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #ffb4ab; }
+  .toast.info { background: rgba(6, 182, 212, 0.15); border-color: rgba(6, 182, 212, 0.3); color: #4cd7f6; }
+  @keyframes slideInRight { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.15); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.25); }
+  .nav-item.active { background: rgba(76, 215, 246, 0.1); border-right: 2px solid #4cd7f6; color: #4cd7f6; }
+  .finding-card { transition: all 0.2s ease; }
+  #evidence-modal { transition: opacity 0.2s ease; }
+  .tab-btn.active-tab { color: #4cd7f6; border-color: #4cd7f6; }
+</style>
+</head>
+<body class="font-body-lg text-on-surface selection:bg-primary/30 selection:text-primary">
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+
+<!-- Login Modal -->
+<div id="login-overlay" class="fixed inset-0 z-[9998] bg-black/80 backdrop-blur-sm items-center justify-center" style="display:none">
+  <div class="glass-panel rounded-xl p-8 w-full max-w-md">
+    <h2 class="font-headline-lg text-headline-lg text-white text-center mb-2">Welcome Back</h2>
+    <p class="font-body-sm text-body-sm text-on-surface-variant text-center mb-8">Sign in to PhishGuard Nexus</p>
+    <div class="mb-5">
+      <label class="font-code-sm text-code-sm text-on-surface-variant block mb-1.5">Username</label>
+      <input id="login-user" class="w-full px-4 py-2.5 bg-surface-container border border-white/10 rounded-lg text-on-surface focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none" type="text" placeholder="admin" value="admin">
+    </div>
+    <div class="mb-6">
+      <label class="font-code-sm text-code-sm text-on-surface-variant block mb-1.5">Password</label>
+      <input id="login-pass" class="w-full px-4 py-2.5 bg-surface-container border border-white/10 rounded-lg text-on-surface focus:ring-2 focus:ring-primary/50 focus:border-primary outline-none" type="password" placeholder="••••••••" value="admin123">
+    </div>
+    <div class="flex gap-3">
+      <button class="flex-1 bg-primary text-on-primary py-3 rounded-lg font-bold hover:brightness-110 transition-all" onclick="window.doLogin()">Sign In</button>
+      <button class="px-6 border border-white/10 text-on-surface py-3 rounded-lg font-bold hover:bg-white/5 transition-all" onclick="window.hideLogin()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- App Layout -->
+<div class="flex min-h-screen">
+
+  <!-- SIDEBAR -->
+  <nav class="flex flex-col h-screen fixed left-0 top-0 z-40 bg-surface/80 backdrop-blur-xl border-r border-white/10 shadow-[0_0_40px_rgba(76,215,246,0.1)] w-64">
+    <div class="p-6">
+      <h1 class="font-display-lg font-bold text-primary text-2xl tracking-tight">PhishGuard Nexus</h1>
+      <p class="font-body-sm text-body-sm text-on-surface-variant opacity-60">Institutional Access</p>
+    </div>
+    <div class="flex-1 px-4 space-y-1 mt-4">
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="home" onclick="window.navigate('home')">
+        <span class="material-symbols-outlined">language</span>
+        <span class="font-body-lg text-body-lg">Home</span>
+      </a>
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="dashboard" onclick="window.navigate('dashboard')">
+        <span class="material-symbols-outlined">dashboard</span>
+        <span class="font-body-lg text-body-lg">Dashboard</span>
+      </a>
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="upload" onclick="window.navigate('upload')">
+        <span class="material-symbols-outlined">upload_file</span>
+        <span class="font-body-lg text-body-lg">Analyze Document</span>
+      </a>
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="investigations" onclick="window.navigate('investigations')">
+        <span class="material-symbols-outlined">search_check</span>
+        <span class="font-body-lg text-body-lg">Investigations</span>
+      </a>
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="compliance" onclick="window.navigate('compliance')">
+        <span class="material-symbols-outlined">gavel</span>
+        <span class="font-body-lg text-body-lg">Compliance Center</span>
+      </a>
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="analytics" onclick="window.navigate('analytics')">
+        <span class="material-symbols-outlined">monitoring</span>
+        <span class="font-body-lg text-body-lg">Analytics</span>
+      </a>
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="reports" onclick="window.navigate('reports')">
+        <span class="material-symbols-outlined">description</span>
+        <span class="font-body-lg text-body-lg">Reports</span>
+      </a>
+      <a class="nav-item flex items-center gap-3 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-white/5 transition-all rounded-lg cursor-pointer" data-page="settings" onclick="window.navigate('settings')">
+        <span class="material-symbols-outlined">settings</span>
+        <span class="font-body-lg text-body-lg">Settings</span>
+      </a>
+    </div>
+    <div class="p-6 border-t border-white/10 bg-primary/5">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center border border-primary/40">
+          <span class="material-symbols-outlined text-primary">verified_user</span>
+        </div>
+        <div>
+          <p class="font-code-sm text-code-sm font-bold text-primary" id="sidebar-auth-status">SYSTEM SECURE</p>
+          <p class="text-[10px] text-on-surface-variant uppercase tracking-widest">v2.4.8-Stable</p>
+        </div>
+      </div>
+      <a id="login-btn" class="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors cursor-pointer" onclick="window.showLogin()">
+        <span class="material-symbols-outlined text-sm">account_circle</span>
+        <span class="font-code-sm text-code-sm" id="login-btn-text">Sign In</span>
+      </a>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <div class="ml-64 flex-1 flex flex-col">
+
+    <!-- TOP HEADER -->
+    <header class="flex justify-between items-center h-16 px-gutter bg-surface/80 backdrop-blur-xl border-b border-white/10 z-30 sticky top-0">
+      <div class="flex items-center bg-surface-container-lowest border border-white/5 px-4 py-1.5 rounded-lg w-96">
+        <span class="material-symbols-outlined text-on-surface-variant text-xl mr-2">search</span>
+        <input class="bg-transparent border-none focus:ring-0 text-body-sm w-full placeholder:text-on-surface-variant/50 outline-none text-on-surface" placeholder="Global Entity Scan..." type="text">
+      </div>
+      <div class="flex items-center gap-6">
+        <div class="flex items-center gap-2 px-3 py-1 bg-tertiary/10 border border-tertiary/20 rounded-full">
+          <span class="w-2 h-2 bg-tertiary rounded-full animate-pulse"></span>
+          <span class="font-code-sm text-code-sm text-tertiary">System Active</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <button class="text-on-surface-variant hover:text-primary transition-all cursor-pointer"><span class="material-symbols-outlined">notifications</span></button>
+          <button class="text-on-surface-variant hover:text-primary transition-all cursor-pointer"><span class="material-symbols-outlined">account_balance</span></button>
+          <div class="w-8 h-8 rounded bg-gradient-to-br from-primary/40 to-secondary/40 border border-white/10 flex items-center justify-center text-primary font-bold text-sm">A</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- PAGE: HOME -->
+    <section id="page-home" class="page-section active">
+
+      <!-- Hero -->
+      <div class="relative min-h-[85vh] flex items-center justify-center overflow-hidden px-gutter py-16">
+        <div class="relative z-10 max-w-5xl mx-auto text-center">
+          <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass-panel border-primary/20 mb-8">
+            <span class="material-symbols-outlined text-primary text-sm">verified_user</span>
+            <span class="font-label-caps text-label-caps text-primary">INSTITUTIONAL GRADE SECURITY</span>
+          </div>
+          <h1 class="font-display-lg text-display-lg md:text-[80px] text-white font-extrabold tracking-[-0.05em] mb-6 drop-shadow-[0_0_30px_rgba(76,215,246,0.3)]">PHISHGUARD NEXUS</h1>
+          <p class="font-headline-lg text-headline-lg text-on-surface-variant max-w-3xl mx-auto mb-4">Real-Time AI-Powered Document Forgery Detection &amp; Compliance Intelligence</p>
+          <p class="font-body-lg text-body-lg text-primary-fixed-dim/80 max-w-2xl mx-auto mb-12">Protecting financial institutions from fraud, document tampering, and compliance violations in under 3 seconds.</p>
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-6">
+            <button class="group relative px-8 py-4 bg-primary text-on-primary font-bold rounded-lg transition-all hover:scale-105 hover:shadow-[0_0_40px_rgba(76,215,246,0.1)] active:scale-95 flex items-center gap-2 overflow-hidden cursor-pointer" onclick="window.navigate('upload')">
+              <span class="absolute w-full h-[2px] bg-gradient-to-r from-transparent via-primary-fixed-dim to-transparent animate-[scan-line_3s_linear_infinite]"></span>
+              <span class="relative z-10">Analyze Document</span>
+              <span class="material-symbols-outlined relative z-10">upload_file</span>
+            </button>
+            <button class="px-8 py-4 border border-white/10 glass-panel text-white font-bold rounded-lg transition-all hover:bg-white/5 hover:border-primary/50 flex items-center gap-2 cursor-pointer" onclick="window.navigate('dashboard')">
+              View Intelligence Dashboard
+              <span class="material-symbols-outlined">analytics</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bento Grid Insights (Home) -->
+      <div class="px-gutter pb-24 max-w-container-max mx-auto">
+        <div class="grid grid-cols-12 gap-6">
+
+          <!-- Global Threat Vector -->
+          <div class="col-span-12 lg:col-span-8 glass-panel p-8 rounded-2xl relative overflow-hidden group">
+            <div class="status-glow-cyan absolute top-0 left-0 w-full h-1"></div>
+            <div class="flex justify-between items-start mb-8">
+              <div>
+                <h3 class="font-headline-lg text-headline-lg text-white mb-2">Global Threat Vector</h3>
+                <p class="font-body-sm text-body-sm text-on-surface-variant">Real-time analysis of cross-border forgery attempts.</p>
+              </div>
+              <div class="text-right">
+                <span class="font-code-sm text-code-sm text-primary block mb-1">DETECTION RATE</span>
+                <span class="font-display-lg text-display-lg text-primary">99.98<span class="text-2xl">%</span></span>
+              </div>
+            </div>
+            <div class="h-64 w-full bg-surface-container-lowest rounded-xl border border-white/5 flex items-center justify-center overflow-hidden relative">
+              <div class="absolute inset-0 flex items-center justify-center gap-4">
+                <div class="w-1 h-12 bg-primary/20 animate-pulse" style="animation-duration:1s"></div>
+                <div class="w-1 h-16 bg-primary/40 animate-pulse" style="animation-duration:1.5s"></div>
+                <div class="w-1 h-8 bg-primary/20 animate-pulse" style="animation-duration:0.8s"></div>
+                <div class="w-1 h-20 bg-primary animate-pulse" style="animation-duration:2s"></div>
+                <div class="w-1 h-12 bg-primary/50 animate-pulse" style="animation-duration:1.2s"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Compliance Sentinel -->
+          <div class="col-span-12 lg:col-span-4 glass-panel p-8 rounded-2xl flex flex-col justify-between group hover:neon-glow-primary transition-all duration-500">
+            <div>
+              <div class="flex items-center gap-3 mb-6">
+                <div class="p-3 bg-primary/10 rounded-lg text-primary">
+                  <span class="material-symbols-outlined">gavel</span>
+                </div>
+                <span class="font-title-md text-title-md text-white">Compliance Sentinel</span>
+              </div>
+              <p class="font-body-lg text-body-lg text-on-surface-variant mb-8">Automated RBI, KYC, and AML auditing protocols ensuring jurisdictional alignment across all transaction tiers.</p>
+            </div>
+            <div class="space-y-4">
+              <div class="flex justify-between items-center text-on-surface-variant font-code-sm text-code-sm">
+                <span>KYC Protocols</span>
+                <span class="text-primary">Verified</span>
+              </div>
+              <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                <div class="h-full bg-primary w-full shadow-[0_0_10px_#4cd7f6]"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Neural Fingerprinting -->
+          <div class="col-span-12 lg:col-span-4 glass-panel p-8 rounded-2xl group border-l-2 border-primary">
+            <span class="font-code-sm text-code-sm text-primary-fixed-dim uppercase tracking-widest mb-4 block">Forgery Analysis</span>
+            <h4 class="font-title-md text-title-md text-white mb-4">Neural Fingerprinting</h4>
+            <p class="font-body-sm text-body-sm text-on-surface-variant mb-6">Detecting microscopic pixel deviations and metadata inconsistencies in official financial documents.</p>
+            <div class="grid grid-cols-2 gap-4">
+              <div class="p-4 bg-surface-container rounded-lg border border-white/5">
+                <span class="font-label-caps text-label-caps block text-on-surface-variant mb-1">LATENCY</span>
+                <span class="font-title-md text-title-md text-primary">1.2ms</span>
+              </div>
+              <div class="p-4 bg-surface-container rounded-lg border border-white/5">
+                <span class="font-label-caps text-label-caps block text-on-surface-variant mb-1">MODELS</span>
+                <span class="font-title-md text-title-md text-primary">V4.0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Institutional Access -->
+          <div class="col-span-12 lg:col-span-8 glass-panel rounded-2xl relative overflow-hidden">
+            <div class="grid md:grid-cols-2 h-full">
+              <div class="p-8">
+                <h4 class="font-headline-lg text-headline-lg text-white mb-4">Institutional Access</h4>
+                <p class="font-body-lg text-body-lg text-on-surface-variant mb-8">Seamless integration with existing core banking systems through our high-performance REST API and secure WebSocket streams.</p>
+                <button class="font-title-md text-title-md text-primary flex items-center gap-2 group cursor-pointer" onclick="window.navigate('upload')">
+                  Analyze a Document
+                  <span class="material-symbols-outlined transition-transform group-hover:translate-x-1">arrow_right_alt</span>
+                </button>
+              </div>
+              <div class="relative min-h-[200px] bg-primary/5 flex items-center justify-center">
+                <span class="material-symbols-outlined text-6xl text-primary/20">speed</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE: DASHBOARD -->
+    <section id="page-dashboard" class="page-section">
+      <div id="dash-loaded" data-loaded="0"></div>
+      <div class="px-gutter pt-6 pb-12">
+
+        <!-- KPI Row -->
+        <div class="grid grid-cols-5 gap-gutter mb-margin-desktop" id="dash-kpi-row">
+          <div class="glass-panel p-5 rounded-xl status-glow-cyan relative overflow-hidden">
+            <div class="flex justify-between items-start mb-3">
+              <span class="material-symbols-outlined text-primary opacity-80">document_scanner</span>
+              <span class="text-[10px] font-bold text-primary/60 tracking-tighter uppercase">Today</span>
+            </div>
+            <div class="font-display-lg text-display-lg text-primary text-3xl mb-1 tabular-nums" id="kpi-scanned">0</div>
+            <div class="text-on-surface-variant text-xs font-label-caps opacity-70">Documents Scanned</div>
+          </div>
+          <div class="glass-panel p-5 rounded-xl status-glow-red relative overflow-hidden">
+            <div class="flex justify-between items-start mb-3">
+              <span class="material-symbols-outlined text-error opacity-80">warning</span>
+              <span class="text-[10px] font-bold text-error/60 tracking-tighter uppercase">High Conf</span>
+            </div>
+            <div class="font-display-lg text-display-lg text-error text-3xl mb-1 tabular-nums" id="kpi-fraud">0</div>
+            <div class="text-on-surface-variant text-xs font-label-caps opacity-70">Fraud Detected</div>
+          </div>
+          <div class="glass-panel p-5 rounded-xl status-glow-cyan">
+            <div class="flex justify-between items-start mb-3">
+              <span class="material-symbols-outlined text-secondary opacity-80">assignment_late</span>
+              <span class="text-[10px] font-bold text-secondary/60 tracking-tighter uppercase">Pending</span>
+            </div>
+            <div class="font-display-lg text-display-lg text-secondary text-3xl mb-1 tabular-nums" id="kpi-highrisk">0</div>
+            <div class="text-on-surface-variant text-xs font-label-caps opacity-70">High Risk Apps</div>
+          </div>
+          <div class="glass-panel p-5 rounded-xl status-glow-red">
+            <div class="flex justify-between items-start mb-3">
+              <span class="material-symbols-outlined text-error opacity-80">notification_important</span>
+              <span class="text-[10px] font-bold text-error/60 tracking-tighter uppercase">Critical</span>
+            </div>
+            <div class="font-display-lg text-display-lg text-error text-3xl mb-1 tabular-nums" id="kpi-compliance">0</div>
+            <div class="text-on-surface-variant text-xs font-label-caps opacity-70">Compliance Alerts</div>
+          </div>
+          <div class="glass-panel p-5 rounded-xl border-primary/20 bg-primary/5">
+            <div class="flex justify-between items-start mb-3">
+              <span class="material-symbols-outlined text-primary opacity-80">speed</span>
+              <span class="text-[10px] font-bold text-primary/60 tracking-tighter uppercase">Aggregate</span>
+            </div>
+            <div class="font-display-lg text-display-lg text-white text-3xl mb-1 tabular-nums" id="kpi-avgscore">0</div>
+            <div class="text-on-surface-variant text-xs font-label-caps opacity-70">Avg Risk Score</div>
+          </div>
+        </div>
+
+        <!-- Bento Grid -->
+        <div class="grid grid-cols-12 gap-gutter">
+
+          <!-- Left: Risk Gauge + Executive Decision -->
+          <div class="col-span-4 flex flex-col gap-gutter">
+            <div class="glass-panel rounded-xl p-8 flex flex-col items-center justify-center text-center relative overflow-hidden">
+              <h3 class="font-title-md text-title-md text-on-surface mb-6">AI Risk Gauge</h3>
+              <div class="relative w-48 h-48 mb-4">
+                <svg class="w-full h-full" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" fill="none" r="45" stroke="rgba(255,255,255,0.05)" stroke-width="8"/>
+                  <circle id="risk-gauge-fill" cx="50" cy="50" fill="none" r="45" stroke="#4edea3" stroke-dasharray="282.7" stroke-dashoffset="282.7" stroke-linecap="round" stroke-width="8" style="transition: stroke-dashoffset 1s ease, stroke 0.5s ease;"/>
+                  <defs>
+                    <linearGradient id="riskGradient" x1="0%" x2="100%" y1="100%" y2="0%">
+                      <stop offset="0%" stop-color="#4edea3"/>
+                      <stop offset="50%" stop-color="#f6e05e"/>
+                      <stop offset="100%" stop-color="#ffb4ab"/>
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                  <span class="font-display-lg text-5xl" id="risk-gauge-score">0</span>
+                  <span class="font-code-sm text-xs text-on-surface-variant/50">/ 100</span>
+                </div>
+              </div>
+              <div class="px-4 py-1.5 rounded-full text-xs font-bold tracking-widest uppercase mb-3" id="risk-gauge-label">Safe</div>
+              <p class="font-body-sm text-on-surface-variant max-w-[200px]">Anomaly detection engines report nominal variance in fiscal structural data.</p>
+            </div>
+
+            <div class="glass-panel rounded-xl p-6 bg-surface-container-high border-white/10">
+              <h3 class="font-title-md text-title-md mb-4 flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">delivery_dining</span>
+                Executive Decision
+              </h3>
+              <div class="space-y-4 mb-6">
+                <div class="flex justify-between items-center pb-2 border-b border-white/5">
+                  <span class="text-on-surface-variant text-sm">Fraud Probability</span>
+                  <span class="font-code-sm text-error" id="exec-fraud-prob">—</span>
+                </div>
+                <div class="flex justify-between items-center pb-2 border-b border-white/5">
+                  <span class="text-on-surface-variant text-sm">Compliance Impact</span>
+                  <span class="font-code-sm text-secondary" id="exec-compliance">—</span>
+                </div>
+                <div class="flex justify-between items-center pb-2 border-b border-white/5">
+                  <span class="text-on-surface-variant text-sm">Regulatory Risk</span>
+                  <span class="font-code-sm text-primary" id="exec-regulatory">—</span>
+                </div>
+              </div>
+              <div class="grid grid-cols-1 gap-3">
+                <button class="w-full bg-primary text-on-primary py-3 rounded font-bold hover:brightness-110 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                  <span class="material-symbols-outlined">check_circle</span> APPROVE
+                </button>
+                <div class="grid grid-cols-2 gap-3">
+                  <button class="bg-white/5 border border-white/10 text-on-surface py-3 rounded font-bold hover:bg-white/10 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                    <span class="material-symbols-outlined text-sm">rate_review</span> REVIEW
+                  </button>
+                  <button class="bg-error/10 border border-error/30 text-error py-3 rounded font-bold hover:bg-error/20 transition-all flex items-center justify-center gap-2 cursor-pointer">
+                    <span class="material-symbols-outlined text-sm">cancel</span> REJECT
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Pipeline + Heatmap + Findings -->
+          <div class="col-span-8 flex flex-col gap-gutter">
+
+            <!-- Scan Pipeline -->
+            <div class="glass-panel rounded-xl p-6 relative overflow-hidden">
+              <div class="flex justify-between items-center mb-8">
+                <h3 class="font-title-md text-title-md">Analysis Pipeline</h3>
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-code-sm text-on-surface-variant">Scanning Node: US-EAST-4</span>
+                  <div class="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                </div>
+              </div>
+              <div class="flex justify-between relative" id="dash-pipeline">
+                <div class="absolute top-5 left-8 right-8 h-px bg-white/10 z-0"></div>
+                <div class="pipeline-steps flex justify-between w-full relative z-10">
+                  <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-white/5 border border-white/20 text-on-surface-variant flex items-center justify-center"><span class="material-symbols-outlined text-xl">dataset</span></div>
+                    <span class="text-[10px] font-label-caps text-on-surface-variant">Metadata</span>
+                  </div>
+                  <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-white/5 border border-white/20 text-on-surface-variant flex items-center justify-center"><span class="material-symbols-outlined text-xl">image_search</span></div>
+                    <span class="text-[10px] font-label-caps text-on-surface-variant">Visual</span>
+                  </div>
+                  <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-white/5 border border-white/20 text-on-surface-variant flex items-center justify-center"><span class="material-symbols-outlined text-xl">text_snippet</span></div>
+                    <span class="text-[10px] font-label-caps text-on-surface-variant">OCR</span>
+                  </div>
+                  <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-white/5 border border-white/20 text-on-surface-variant flex items-center justify-center"><span class="material-symbols-outlined text-xl">calculate</span></div>
+                    <span class="text-[10px] font-label-caps text-on-surface-variant">Numeric</span>
+                  </div>
+                  <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-white/5 border border-white/20 text-on-surface-variant flex items-center justify-center"><span class="material-symbols-outlined text-xl">draw</span></div>
+                    <span class="text-[10px] font-label-caps text-on-surface-variant">Signature</span>
+                  </div>
+                  <div class="flex flex-col items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-white/5 border border-white/20 text-on-surface-variant flex items-center justify-center"><span class="material-symbols-outlined text-xl">policy</span></div>
+                    <span class="text-[10px] font-label-caps text-on-surface-variant">Compliance</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Heatmap + Findings -->
+            <div class="grid grid-cols-2 gap-gutter">
+              <!-- Recent Scans Table -->
+              <div class="glass-panel rounded-xl p-5">
+                <h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-4">Recent Scans</h4>
+                <div id="recent-scans-body" class="space-y-2">
+                  <div class="text-on-surface-variant/50 text-sm text-center py-8">Loading...</div>
+                </div>
+              </div>
+
+              <!-- Live Threats -->
+              <div class="glass-panel rounded-xl p-5">
+                <h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-4">Live Threats</h4>
+                <div id="live-threats-body" class="space-y-2">
+                  <div class="text-on-surface-variant/50 text-sm text-center py-8">Loading...</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="grid grid-cols-2 gap-gutter">
+              <div class="glass-panel rounded-xl p-5">
+                <h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-4">Risk Distribution</h4>
+                <div class="h-48"><canvas id="risk-dist-chart"></canvas></div>
+              </div>
+              <div class="glass-panel rounded-xl p-5">
+                <h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-4">14-Day Trend</h4>
+                <div class="h-48"><canvas id="trend-chart"></canvas></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE: UPLOAD -->
+    <section id="page-upload" class="page-section">
+      <div id="upload-loaded" data-loaded="0"></div>
+      <div class="px-gutter pt-6 pb-12">
+        <div class="mb-6">
+          <h2 class="font-headline-lg text-headline-lg text-white">Document Analysis</h2>
+          <p class="font-body-sm text-body-sm text-on-surface-variant">Upload a document for AI-powered fraud detection and compliance analysis</p>
+        </div>
+
+        <!-- Upload Zone -->
+        <div id="upload-zone" class="glass-panel rounded-xl p-12 border-2 border-dashed border-primary/20 flex flex-col items-center justify-center group hover:border-primary/50 transition-all cursor-pointer bg-primary/5 relative">
+          <div class="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <span class="material-symbols-outlined text-4xl text-primary">upload_file</span>
+          </div>
+          <h4 class="font-title-md text-title-md mb-2">Ingest Investigation Entity</h4>
+          <p class="font-body-sm text-on-surface-variant">Drag and drop document batches or <span class="text-primary underline">browse local drive</span></p>
+          <div class="mt-6 flex gap-3">
+            <span class="px-3 py-1 bg-white/5 rounded text-[10px] font-code-sm border border-white/5">PDF</span>
+            <span class="px-3 py-1 bg-white/5 rounded text-[10px] font-code-sm border border-white/5">JPG</span>
+            <span class="px-3 py-1 bg-white/5 rounded text-[10px] font-code-sm border border-white/5">PNG</span>
+            <span class="px-3 py-1 bg-white/5 rounded text-[10px] font-code-sm border border-white/5">DOCX</span>
+          </div>
+        </div>
+        <input id="file-input" type="file" accept=".pdf,.png,.jpg,.jpeg" style="display:none">
+
+        <!-- Scan Pipeline -->
+        <div id="scan-pipeline" class="glass-panel rounded-xl p-6 mt-6" style="display:none">
+          <div class="flex items-center gap-3 mb-6 text-on-surface-variant font-body-sm">
+            <span class="material-symbols-outlined text-primary">description</span>
+            Analyzing: <strong id="file-name" class="text-primary"></strong>
+          </div>
+          <div class="space-y-3">
+            <div id="step-meta" class="flex items-center gap-4 p-4 bg-surface-container rounded-lg border border-white/5 pending-step">
+              <span class="step-icon w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-on-surface-variant flex-shrink-0"><span class="material-symbols-outlined text-lg">dataset</span></span>
+              <span class="flex-1 font-body-sm">Metadata Analysis</span>
+              <span class="step-status text-xs text-on-surface-variant/50">Pending</span>
+            </div>
+            <div id="step-ela" class="flex items-center gap-4 p-4 bg-surface-container rounded-lg border border-white/5 pending-step">
+              <span class="step-icon w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-on-surface-variant flex-shrink-0"><span class="material-symbols-outlined text-lg">image_search</span></span>
+              <span class="flex-1 font-body-sm">Visual Tampering Detection</span>
+              <span class="step-status text-xs text-on-surface-variant/50">Pending</span>
+            </div>
+            <div id="step-ocr" class="flex items-center gap-4 p-4 bg-surface-container rounded-lg border border-white/5 pending-step">
+              <span class="step-icon w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-on-surface-variant flex-shrink-0"><span class="material-symbols-outlined text-lg">text_snippet</span></span>
+              <span class="flex-1 font-body-sm">OCR Extraction &amp; Analysis</span>
+              <span class="step-status text-xs text-on-surface-variant/50">Pending</span>
+            </div>
+            <div id="step-numeric" class="flex items-center gap-4 p-4 bg-surface-container rounded-lg border border-white/5 pending-step">
+              <span class="step-icon w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-on-surface-variant flex-shrink-0"><span class="material-symbols-outlined text-lg">calculate</span></span>
+              <span class="flex-1 font-body-sm">Numeric Validation</span>
+              <span class="step-status text-xs text-on-surface-variant/50">Pending</span>
+            </div>
+            <div id="step-sig" class="flex items-center gap-4 p-4 bg-surface-container rounded-lg border border-white/5 pending-step">
+              <span class="step-icon w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-on-surface-variant flex-shrink-0"><span class="material-symbols-outlined text-lg">draw</span></span>
+              <span class="flex-1 font-body-sm">Signature Verification</span>
+              <span class="step-status text-xs text-on-surface-variant/50">Pending</span>
+            </div>
+            <div id="step-compliance" class="flex items-center gap-4 p-4 bg-surface-container rounded-lg border border-white/5 pending-step">
+              <span class="step-icon w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-on-surface-variant flex-shrink-0"><span class="material-symbols-outlined text-lg">policy</span></span>
+              <span class="flex-1 font-body-sm">Compliance Mapping</span>
+              <span class="step-status text-xs text-on-surface-variant/50">Pending</span>
+            </div>
+            <div id="scan-complete" class="flex items-center gap-4 p-4 bg-surface-container rounded-lg border border-white/5 pending-step">
+              <span class="step-icon w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-on-surface-variant flex-shrink-0"><span class="material-symbols-outlined text-lg">check_circle</span></span>
+              <span class="flex-1 font-body-sm">Analysis Complete</span>
+              <span class="step-status text-xs text-on-surface-variant/50">Pending</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Results -->
+        <div id="scan-results" class="mt-6" style="display:none">
+          <!-- Corrupted Document Banner -->
+          <div id="scan-error-banner" class="flex items-start gap-3 p-4 mb-6 bg-error/10 border border-error/30 rounded-xl" style="display:none">
+            <span class="material-symbols-outlined text-error flex-shrink-0 mt-0.5">warning</span>
+            <div>
+              <div class="text-sm font-bold text-error" id="scan-error-banner-title">Corrupted Document Detected</div>
+              <div class="text-xs text-on-surface-variant mt-1" id="scan-error-banner-message">This file could not be parsed because its PDF structure is invalid. The document has been automatically rejected.</div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between mb-6">
+            <h3 class="font-title-md text-title-md text-white">Analysis Results</h3>
+            <div class="flex gap-2">
+              <button class="px-4 py-2 bg-primary/20 text-primary rounded-lg font-bold text-sm hover:bg-primary/30 transition-all cursor-pointer" onclick="window.exportReport()">
+                <span class="material-symbols-outlined text-sm align-middle mr-1">download</span> Export PDF
+              </button>
+              <button class="px-4 py-2 border border-white/10 text-on-surface rounded-lg font-bold text-sm hover:bg-white/5 transition-all cursor-pointer" onclick="window.resetUpload()">New Analysis</button>
+            </div>
+          </div>
+
+          <!-- KPI Row: Risk Score, Authenticity Score, Fraud Confidence, Risk Level, Decision -->
+          <div class="grid grid-cols-5 gap-gutter mb-6">
+            <div class="glass-panel rounded-xl p-6 text-center">
+              <div class="text-xs text-on-surface-variant mb-2">Unified Risk Score</div>
+              <div class="font-display-lg text-display-lg text-4xl" id="scan-risk-score">—</div>
+              <div class="text-sm text-on-surface-variant mt-1" id="scan-risk-label">—</div>
+            </div>
+            <div class="glass-panel rounded-xl p-6 text-center">
+              <div class="text-xs text-on-surface-variant mb-2">Authenticity Score</div>
+              <div class="font-display-lg text-display-lg text-4xl" id="scan-authenticity-score">—</div>
+              <div class="text-sm text-on-surface-variant mt-1">Trustworthiness</div>
+            </div>
+            <div class="glass-panel rounded-xl p-6 text-center">
+              <div class="text-xs text-on-surface-variant mb-2">Fraud Confidence</div>
+              <div class="font-display-lg text-display-lg text-4xl" id="scan-fraud-confidence">—</div>
+              <div class="text-sm text-on-surface-variant mt-1">Confidence Level</div>
+            </div>
+            <div class="glass-panel rounded-xl p-6 text-center">
+              <div class="text-xs text-on-surface-variant mb-2">VERDICT</div>
+              <div class="font-display-lg text-display-lg text-sm leading-tight" id="scan-verdict">—</div>
+              <div class="text-sm text-on-surface-variant mt-1">Classification</div>
+            </div>
+            <div class="glass-panel rounded-xl p-6 text-center" id="scan-decision-panel">
+              <div class="text-xs text-on-surface-variant mb-2">Decision</div>
+              <div class="font-display-lg text-display-lg text-4xl" id="scan-decision">—</div>
+              <div class="text-sm text-on-surface-variant mt-1">Recommended Action</div>
+            </div>
+          </div>
+
+          <!-- Score Evolution -->
+          <div id="scan-evolution-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">trending_up</span>
+              <span class="text-sm font-bold text-white">Risk Score Evolution</span>
+            </div>
+            <div id="scan-evolution-steps" class="space-y-2"></div>
+            <div id="scan-evolution-total" class="border-t border-white/10 mt-3 pt-3"></div>
+          </div>
+
+          <!-- Radar Chart -->
+          <div id="scan-radar-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">radar</span>
+              <span class="text-sm font-bold text-white">Risk Category Radar</span>
+            </div>
+            <div class="h-56"><canvas id="scan-radar-chart"></canvas></div>
+          </div>
+
+          <!-- Compliance Impact -->
+          <div id="scan-compliance-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">gavel</span>
+              <span class="text-sm font-bold text-white">Compliance Impact</span>
+            </div>
+            <div id="scan-compliance-rows" class="space-y-2"></div>
+          </div>
+
+          <!-- Model Explainability -->
+          <div id="scan-explain-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">psychology</span>
+              <span class="text-sm font-bold text-white">Why This Score?</span>
+            </div>
+            <div id="scan-explain-contrib" class="space-y-2"></div>
+          </div>
+
+          <!-- Investigation Timeline -->
+          <div id="scan-timeline-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">timeline</span>
+              <span class="text-sm font-bold text-white">Analysis Timeline</span>
+            </div>
+            <div id="scan-timeline-steps" class="space-y-1"></div>
+          </div>
+
+          <!-- Human Override -->
+          <div id="scan-override-human-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">verified_user</span>
+              <span class="text-sm font-bold text-white">Human Override</span>
+            </div>
+            <div class="flex items-baseline gap-3 mb-4">
+              <span class="text-sm text-on-surface-variant">AI Decision:</span>
+              <span class="font-display-lg text-display-lg text-3xl" id="scan-ai-decision">—</span>
+            </div>
+            <div class="flex items-baseline gap-3 mb-4" id="scan-human-decision-row" style="display:none">
+              <span class="text-sm text-on-surface-variant">Human Decision:</span>
+              <span class="font-display-lg text-display-lg text-3xl text-tertiary" id="scan-human-decision">—</span>
+            </div>
+            <div class="text-xs text-on-surface-variant mb-3" id="scan-human-reason" style="display:none"></div>
+            <div class="flex gap-3 mb-3">
+              <button id="approve-btn" class="flex-1 px-4 py-2 bg-tertiary/20 text-tertiary rounded-lg font-bold text-sm hover:bg-tertiary/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Approve</button>
+              <button id="review-btn" class="flex-1 px-4 py-2 bg-yellow-500/20 text-yellow-500 rounded-lg font-bold text-sm hover:bg-yellow-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Review</button>
+              <button id="reject-btn" class="flex-1 px-4 py-2 bg-error/20 text-error rounded-lg font-bold text-sm hover:bg-error/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Reject</button>
+              <button id="escalate-btn" class="flex-1 px-4 py-2 bg-error/20 text-error rounded-lg font-bold text-sm hover:bg-error/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">Escalate</button>
+            </div>
+            <div class="text-xs text-on-surface-variant" id="decision-status"></div>
+          </div>
+
+          <!-- Similar Cases -->
+          <div id="scan-similar-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">cases</span>
+              <span class="text-sm font-bold text-white">Similar Investigations</span>
+            </div>
+            <div id="scan-similar-list" class="space-y-2"></div>
+          </div>
+
+          <!-- Verdict Panel -->
+          <div id="scan-verdict-panel" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-start gap-4">
+              <div class="flex-1">
+                <div class="text-xs text-on-surface-variant uppercase tracking-widest mb-1">Verdict</div>
+                <div class="text-xl font-bold text-white mb-2" id="scan-verdict-label">—</div>
+                <div class="flex gap-4 text-sm text-on-surface-variant">
+                  <span>Fraud Confidence: <span class="text-white font-semibold" id="scan-verdict-confidence">—</span></span>
+                  <span>Authenticity: <span class="text-white font-semibold" id="scan-verdict-authenticity">—</span></span>
+                </div>
+              </div>
+            </div>
+            <div class="mt-4 p-4 bg-surface-container rounded-lg border border-white/5">
+              <div class="text-xs text-on-surface-variant mb-2 font-semibold">Top Evidence</div>
+              <div id="scan-verdict-evidence" class="space-y-1"></div>
+            </div>
+          </div>
+
+          <!-- Fabrication Indicators -->
+          <div id="scan-fabrication-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-error">fact_check</span>
+                <span class="text-sm font-bold text-white">Fabrication Indicators</span>
+              </div>
+              <span class="text-sm font-bold font-mono" id="scan-fabrication-count">—</span>
+            </div>
+            <div id="scan-fabrication-list" class="space-y-1"></div>
+          </div>
+
+          <!-- Decision Card with Override Reason -->
+          <div id="scan-decision-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-3 mb-4">
+              <span class="material-symbols-outlined text-error">gavel</span>
+              <span class="text-sm font-bold text-white">Decision</span>
+            </div>
+            <div class="flex items-baseline gap-3 mb-4">
+              <span class="font-display-lg text-display-lg text-4xl" id="scan-decision-card-value">—</span>
+              <span class="text-sm text-on-surface-variant" id="scan-decision-card-confidence">—</span>
+            </div>
+            <div class="p-4 bg-surface-container rounded-lg border border-white/5">
+              <div class="text-xs text-on-surface-variant mb-1">Reason</div>
+              <div class="text-sm text-white" id="scan-decision-card-reason">—</div>
+            </div>
+          </div>
+
+          <!-- Risk Escalation Override -->
+          <div id="scan-override-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-3 mb-4">
+              <span class="material-symbols-outlined text-yellow-500">trending_up</span>
+              <span class="text-sm font-bold text-white">Risk Escalation Triggered</span>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+              <div class="p-3 bg-surface-container rounded-lg text-center">
+                <div class="text-xs text-on-surface-variant mb-1">Original Score</div>
+                <div class="text-lg font-bold text-on-surface-variant" id="scan-original-score">—</div>
+              </div>
+              <div class="p-3 bg-surface-container rounded-lg text-center">
+                <div class="text-xs text-on-surface-variant mb-1">Escalated Score</div>
+                <div class="text-lg font-bold text-error" id="scan-escalated-score">—</div>
+              </div>
+            </div>
+            <div class="p-3 bg-surface-container rounded-lg">
+              <div class="text-xs text-on-surface-variant mb-1">Rule Triggered</div>
+              <div class="text-sm text-white" id="scan-override-rule">—</div>
+            </div>
+          </div>
+
+          <!-- Evidence Summary -->
+          <div class="glass-panel rounded-xl p-6 mb-6">
+            <div class="text-sm font-semibold text-white mb-4">Evidence Summary</div>
+            <div id="scan-evidence-summary" class="space-y-1"></div>
+          </div>
+
+          <!-- Extracted Fields -->
+          <div id="scan-extracted-card" class="glass-panel rounded-xl p-6 mb-6" style="display:none">
+            <div class="flex items-center gap-2 mb-4">
+              <span class="material-symbols-outlined text-primary">description</span>
+              <span class="text-sm font-bold text-white">Extracted Document Fields</span>
+            </div>
+            <div id="scan-extracted-fields" class="grid grid-cols-2 gap-3"></div>
+          </div>
+
+          <!-- Contribution Breakdown -->
+          <div class="glass-panel rounded-xl p-6 mb-6">
+            <div class="text-sm font-semibold text-white mb-4">Score Contribution Breakdown</div>
+            <div id="scan-contributions" class="space-y-2"></div>
+            <div class="border-t border-white/10 mt-4 pt-3 flex justify-between text-sm">
+              <span class="text-on-surface-variant">Raw Score</span>
+              <span class="text-white font-mono font-bold" id="scan-raw-score">—</span>
+            </div>
+            <div class="flex justify-between text-sm mt-1">
+              <span class="text-on-surface-variant">Normalized Score</span>
+              <span class="text-primary font-mono font-bold" id="scan-normalized-score">—</span>
+            </div>
+          </div>
+
+          <!-- Recommendations -->
+          <div class="glass-panel rounded-xl p-6 mb-6">
+            <div class="text-sm font-semibold text-white mb-3">Recommendations</div>
+            <ul id="scan-recommendations" class="text-sm text-on-surface-variant space-y-1"></ul>
+          </div>
+
+          <!-- Detailed Findings -->
+          <div class="glass-panel rounded-xl p-6">
+            <div class="text-sm font-semibold text-white mb-4">Detailed Findings</div>
+            <div id="scan-findings" class="space-y-3"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE: INVESTIGATIONS -->
+    <section id="page-investigations" class="page-section">
+      <div id="inv-loaded" data-loaded="0"></div>
+      <div class="px-gutter pt-6 pb-12">
+        <div class="mb-6">
+          <h2 class="font-headline-lg text-headline-lg text-white">Investigations</h2>
+          <p class="font-body-sm text-body-sm text-on-surface-variant">Review flagged documents and suspicious activity</p>
+        </div>
+        <div class="grid grid-cols-3 gap-gutter mb-6">
+          <div class="glass-panel rounded-xl p-6 text-center">
+            <div class="font-display-lg text-display-lg text-primary text-4xl" id="inv-total">0</div>
+            <div class="text-xs text-on-surface-variant mt-1">Total Cases</div>
+          </div>
+          <div class="glass-panel rounded-xl p-6 text-center">
+            <div class="font-display-lg text-display-lg text-error text-4xl" id="inv-high">0</div>
+            <div class="text-xs text-on-surface-variant mt-1">High Risk</div>
+          </div>
+          <div class="glass-panel rounded-xl p-6 text-center">
+            <div class="font-display-lg text-display-lg text-primary text-4xl" id="inv-open">0</div>
+            <div class="text-xs text-on-surface-variant mt-1">Open Cases</div>
+          </div>
+        </div>
+        <div id="investigations-list" class="grid grid-cols-2 gap-gutter"></div>
+      </div>
+    </section>
+
+    <!-- PAGE: COMPLIANCE -->
+    <section id="page-compliance" class="page-section">
+      <div id="comp-loaded" data-loaded="0"></div>
+      <div class="px-gutter pt-6 pb-12">
+        <div class="mb-6">
+          <h2 class="font-headline-lg text-headline-lg text-white">Compliance Center</h2>
+          <p class="font-body-sm text-body-sm text-on-surface-variant">Regulatory compliance mapping across RBI KYC, AML, DPDP Act, and CERT-In</p>
+        </div>
+        <div class="grid grid-cols-4 gap-gutter mb-6">
+          <div class="glass-panel rounded-xl p-6 text-center">
+            <div class="font-display-lg text-display-lg text-primary text-4xl" id="comp-total">0</div>
+            <div class="text-xs text-on-surface-variant mt-1">Total Alerts</div>
+          </div>
+          <div class="glass-panel rounded-xl p-6 text-center">
+            <div class="font-display-lg text-display-lg text-error text-4xl" id="comp-critical">0</div>
+            <div class="text-xs text-on-surface-variant mt-1">Critical</div>
+          </div>
+          <div class="glass-panel rounded-xl p-6 text-center">
+            <div class="font-display-lg text-display-lg text-yellow-500 text-4xl" id="comp-high">0</div>
+            <div class="text-xs text-on-surface-variant mt-1">High</div>
+          </div>
+          <div class="glass-panel rounded-xl p-6 text-center flex flex-col items-center justify-center">
+            <div class="flex gap-2 flex-wrap justify-center">
+              <span class="px-3 py-1 bg-primary/10 border border-primary/30 text-primary rounded text-[10px] font-semibold">RBI KYC</span>
+              <span class="px-3 py-1 bg-secondary/10 border border-secondary/30 text-secondary rounded text-[10px] font-semibold">AML</span>
+              <span class="px-3 py-1 bg-tertiary/10 border border-tertiary/30 text-tertiary rounded text-[10px] font-semibold">DPDP</span>
+              <span class="px-3 py-1 bg-error/10 border border-error/30 text-error rounded text-[10px] font-semibold">CERT-In</span>
+            </div>
+            <div class="text-xs text-on-surface-variant mt-1">Frameworks</div>
+          </div>
+        </div>
+        <div class="glass-panel rounded-xl p-6">
+          <h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-4">Compliance Findings</h4>
+          <div id="compliance-findings-list" class="space-y-3"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE: ANALYTICS -->
+    <section id="page-analytics" class="page-section">
+      <div id="analytics-loaded" data-loaded="0"></div>
+      <div class="px-gutter pt-6 pb-12">
+        <div class="mb-6">
+          <h2 class="font-headline-lg text-headline-lg text-white">Analytics</h2>
+          <p class="font-body-sm text-body-sm text-on-surface-variant">Enterprise BI-style fraud intelligence analytics</p>
+        </div>
+        <div class="grid grid-cols-4 gap-gutter mb-6">
+          <div class="glass-panel p-5 rounded-xl status-glow-red"><div class="font-label-caps text-label-caps text-error mb-1">Threats Blocked</div><div class="font-display-lg text-display-lg text-error text-3xl" id="analytics-threats">0</div></div>
+          <div class="glass-panel p-5 rounded-xl status-glow-cyan"><div class="font-label-caps text-label-caps text-primary mb-1">Active Campaigns</div><div class="font-display-lg text-display-lg text-primary text-3xl" id="analytics-campaigns">0</div></div>
+          <div class="glass-panel p-5 rounded-xl status-glow-green"><div class="font-label-caps text-label-caps text-tertiary mb-1">Zero-Day Detections</div><div class="font-display-lg text-display-lg text-tertiary text-3xl" id="analytics-zeroday">0</div></div>
+          <div class="glass-panel p-5 rounded-xl"><div class="font-label-caps text-label-caps text-on-surface-variant mb-1">Endpoints Protected</div><div class="font-display-lg text-display-lg text-white text-3xl" id="analytics-endpoints">0</div></div>
+        </div>
+        <div class="grid grid-cols-2 gap-gutter mb-6">
+          <div class="glass-panel rounded-xl p-5"><h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-3">Risk Trend Analysis</h4><div class="h-52"><canvas id="chart-risk-trend"></canvas></div></div>
+          <div class="glass-panel rounded-xl p-5"><h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-3">Fraud Detection Trends</h4><div class="h-52"><canvas id="chart-fraud-trend"></canvas></div></div>
+          <div class="glass-panel rounded-xl p-5"><h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-3">Risk Distribution</h4><div class="h-52"><canvas id="chart-risk-dist"></canvas></div></div>
+          <div class="glass-panel rounded-xl p-5"><h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-3">Scan Volume</h4><div class="h-52"><canvas id="chart-scan-volume"></canvas></div></div>
+        </div>
+        <div class="grid grid-cols-2 gap-gutter">
+          <div class="glass-panel rounded-xl p-5"><h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-3">Risk Categories</h4><div class="h-52"><canvas id="chart-risk-categories"></canvas></div></div>
+          <div class="glass-panel rounded-xl p-5"><h4 class="font-body-sm font-bold text-on-surface-variant uppercase tracking-widest text-[10px] mb-3">Recent Investigations</h4><div class="h-52 overflow-y-auto" id="analytics-recent-investigations"><div class="text-xs text-on-surface-variant text-center py-10">Loading...</div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAGE: REPORTS -->
+    <section id="page-reports" class="page-section">
+      <div id="reports-loaded" data-loaded="0"></div>
+      <div class="px-gutter pt-6 pb-12">
+        <div class="mb-6">
+          <h2 class="font-headline-lg text-headline-lg text-white">Reports</h2>
+          <p class="font-body-sm text-body-sm text-on-surface-variant">Downloadable fraud intelligence reports and audit logs</p>
+        </div>
+        <div class="flex gap-3 mb-6">
+          <select class="px-4 py-2 bg-surface-container border border-white/10 rounded-lg text-sm text-on-surface outline-none">
+            <option>All Reports</option>
+            <option>Executive Summary</option><option>Compliance Audit</option><option>Fraud Analysis</option><option>Risk Assessment</option>
+          </select>
+          <select class="px-4 py-2 bg-surface-container border border-white/10 rounded-lg text-sm text-on-surface outline-none">
+            <option>Last 7 Days</option><option>Last 30 Days</option><option>Last Quarter</option><option>All Time</option>
+          </select>
+          <button class="px-5 py-2 bg-primary text-on-primary rounded-lg font-bold text-sm hover:brightness-110 transition-all cursor-pointer" onclick="window.showToast('Generating custom report...', 'info')">Generate Report</button>
+        </div>
+        <div id="reports-list" class="space-y-3"></div>
+      </div>
+    </section>
+
+    <!-- PAGE: SETTINGS -->
+    <section id="page-settings" class="page-section">
+      <div id="settings-loaded" data-loaded="0"></div>
+      <div class="px-gutter pt-6 pb-12">
+        <div class="mb-6">
+          <h2 class="font-headline-lg text-headline-lg text-white">Settings</h2>
+          <p class="font-body-sm text-body-sm text-on-surface-variant">Configure platform preferences and security policies</p>
+        </div>
+        <div class="glass-panel rounded-xl p-6 max-w-xl">
+          <div class="mb-6">
+            <h4 class="font-body-sm font-bold text-white mb-4 pb-2 border-b border-white/5">Detection Preferences</h4>
+            <div class="space-y-4">
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Auto-scan on upload</div><div class="text-xs text-on-surface-variant">Begin analysis immediately when a document is uploaded</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-active="true"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-[22px] transition-all"></div></div></div>
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Signature verification</div><div class="text-xs text-on-surface-variant">Enable Siamese CNN signature comparison</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-active="true"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-[22px] transition-all"></div></div></div>
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Compliance mapping</div><div class="text-xs text-on-surface-variant">Map findings to RBI KYC, AML, DPDP, CERT-In frameworks</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-setting="compliance-mapping" data-active="true"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-[22px] transition-all"></div></div></div>
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Anomaly detection</div><div class="text-xs text-on-surface-variant">Enable Isolation Forest and Autoencoder analysis</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-active="true"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-[22px] transition-all"></div></div></div>
+            </div>
+          </div>
+          <div class="mb-6">
+            <h4 class="font-body-sm font-bold text-white mb-4 pb-2 border-b border-white/5">Notifications</h4>
+            <div class="space-y-4">
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Critical alerts</div><div class="text-xs text-on-surface-variant">Push notifications for HIGH and CRITICAL findings</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-active="true"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-[22px] transition-all"></div></div></div>
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Daily digest</div><div class="text-xs text-on-surface-variant">Receive daily summary of all detections</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-active="false"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-0.5 transition-all"></div></div></div>
+            </div>
+          </div>
+          <div>
+            <h4 class="font-body-sm font-bold text-white mb-4 pb-2 border-b border-white/5">Security</h4>
+            <div class="space-y-4">
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Session timeout</div><div class="text-xs text-on-surface-variant">Auto-logout after 24 hours of inactivity</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-active="true"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-[22px] transition-all"></div></div></div>
+              <div class="flex items-center justify-between"><div><div class="text-sm font-medium text-white">Audit logging</div><div class="text-xs text-on-surface-variant">Log all user actions for compliance</div></div><div class="toggle w-11 h-6 bg-white/10 rounded-full relative cursor-pointer" data-active="true"><div class="toggle-knob w-5 h-5 bg-white rounded-full absolute top-0.5 left-[22px] transition-all"></div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- Evidence Viewer Modal (shared across pages) -->
+<div id="evidence-viewer-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm" onclick="if (event.target === this) closeEvidenceViewer()">
+  <div class="bg-surface-container border border-white/10 rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[85vh] overflow-y-auto" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between mb-4">
+      <h4 class="text-sm font-bold text-white" id="evidence-viewer-title">Evidence Details</h4>
+      <button class="text-on-surface-variant hover:text-white cursor-pointer" onclick="closeEvidenceViewer()"><span class="material-symbols-outlined">close</span></button>
+    </div>
+    <div id="evidence-viewer-body" class="space-y-4"></div>
+  </div>
+</div>
+
+<script src="/static/js/particles.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

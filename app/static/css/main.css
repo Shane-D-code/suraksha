@@ -1,0 +1,43 @@
+/* Page sections – hidden by default, shown via .active */
+.page-section { display: none; }
+.page-section.active { display: block; }
+
+/* Upload pipeline step statuses */
+.pending-step { transition: all 0.3s ease; }
+.pending-step.active { border-color: rgba(76, 215, 246, 0.4) !important; background: rgba(76, 215, 246, 0.05) !important; }
+.pending-step.active .step-icon { background: rgba(76, 215, 246, 0.2) !important; color: #4cd7f6 !important; }
+.pending-step.active .step-status { color: #4cd7f6 !important; }
+.pending-step.done { border-color: rgba(78, 222, 163, 0.3) !important; background: rgba(78, 222, 163, 0.05) !important; }
+.pending-step.done .step-icon { background: rgba(78, 222, 163, 0.2) !important; color: #4edea3 !important; }
+.pending-step.done .step-status { color: #4edea3 !important; content: 'Complete'; }
+.pending-step.error { border-color: rgba(255, 180, 171, 0.3) !important; background: rgba(255, 180, 171, 0.05) !important; }
+.pending-step.error .step-icon { background: rgba(255, 180, 171, 0.2) !important; color: #ffb4ab !important; }
+.pending-step.error .step-status { color: #ffb4ab !important; }
+
+/* Dashboard pipeline step highlighting */
+.pipeline-steps .step-active .w-10 {
+  background: #4cd7f6 !important;
+  color: #003640 !important;
+  box-shadow: 0 0 20px rgba(76, 215, 246, 0.4);
+}
+.pipeline-steps .step-active .text-[10px] { color: #4cd7f6 !important; }
+.pipeline-steps .step-done .w-10 {
+  background: rgba(78, 222, 163, 0.2) !important;
+  color: #4edea3 !important;
+  border-color: rgba(78, 222, 163, 0.3) !important;
+}
+.pipeline-steps .step-done .text-[10px] { color: #4edea3 !important; }
+
+/* Active toggle style */
+.toggle.active { background: #4cd7f6 !important; box-shadow: 0 0 10px rgba(76, 215, 246, 0.3); }
+.toggle.active .toggle-knob { left: 22px !important; }
+.toggle:not(.active) { background: rgba(255, 255, 255, 0.1) !important; }
+.toggle:not(.active) .toggle-knob { left: 2px !important; }
+
+/* Investigation cards */
+.investigation-card { transition: all 0.3s ease; }
+.investigation-card:hover { border-color: rgba(76, 215, 246, 0.2); box-shadow: 0 0 30px rgba(76, 215, 246, 0.05); }
+
+/* Finding cards */
+.finding-card { transition: all 0.3s ease; }
+.finding-card:hover { border-color: rgba(76, 215, 246, 0.15); }

@@ -105,6 +105,29 @@ CREATE TABLE IF NOT EXISTS threat_feeds (
 CREATE INDEX IF NOT EXISTS idx_threat_feeds_name ON threat_feeds(feed_name);
 CREATE INDEX IF NOT EXISTS idx_threat_feeds_active ON threat_feeds(is_active);
 
+-- Compliance alerts table
+CREATE TABLE IF NOT EXISTS compliance_alerts (
+    id SERIAL PRIMARY KEY,
+    scan_id VARCHAR(64) REFERENCES scans(scan_id),
+    regulation VARCHAR(128) NOT NULL,
+    reference VARCHAR(256) NOT NULL,
+    finding_type VARCHAR(128) NOT NULL,
+    finding_description TEXT,
+    risk_impact TEXT,
+    required_action TEXT,
+    timeline VARCHAR(256),
+    responsible_party VARCHAR(128),
+    compliance_severity VARCHAR(20) NOT NULL CHECK (compliance_severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+    source_signal VARCHAR(256),
+    report_id VARCHAR(64),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_scan_id ON compliance_alerts(scan_id);
+CREATE INDEX IF NOT EXISTS idx_compliance_severity ON compliance_alerts(compliance_severity);
+CREATE INDEX IF NOT EXISTS idx_compliance_regulation ON compliance_alerts(regulation);
+CREATE INDEX IF NOT EXISTS idx_compliance_created_at ON compliance_alerts(created_at DESC);
+
 -- Insert initial model metadata
 INSERT INTO model_metadata (model_name, model_version, is_active)
 VALUES ('phishing_detector_v1', '1.0.0', TRUE)
