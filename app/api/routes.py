@@ -2155,6 +2155,62 @@ async def update_investigation_status(
         raise HTTPException(status_code=500, detail="Failed to update investigation")
 
 
+class HumanDecisionRequest(BaseModel):
+    scan_id: str
+    decision: str
+
+
+# @router.post("/human-decision")
+# async def submit_human_decision(
+#     request: HumanDecisionRequest,
+#     current_user: dict = Depends(get_current_user),
+# ):
+#     """
+#     Record a human override decision for a scan (APPROVED / UNDER_REVIEW / REJECTED / ESCALATED).
+
+#     Updates the scan's meta with the decision and audits who made it.
+#     """
+#     try:
+#         async for session in get_db_session():
+#             from sqlalchemy import select
+#             from app.models.db import Scan as DBScan
+
+#             stmt = select(DBScan).where(DBScan.scan_id == request.scan_id)
+#             result = await session.execute(stmt)
+#             scan = result.scalar_one_or_none()
+
+#             if not scan:
+#                 raise HTTPException(status_code=404, detail=f"Scan {request.scan_id} not found")
+
+#             meta = dict(scan.meta or {})
+#             case_meta = dict(meta.get("case", {}))
+#             case_meta["human_decision"] = request.decision
+#             case_meta["decided_by"] = current_user.get("username", "unknown")
+#             case_meta["decided_at"] = datetime.utcnow().isoformat()
+#             meta["case"] = case_meta
+#             scan.meta = meta
+#             await session.commit()
+
+#             logger.info(
+#                 "Human decision recorded",
+#                 scan_id=request.scan_id,
+#                 decision=request.decision,
+#                 user=current_user.get("username"),
+#             )
+
+#             return {
+#                 "status": "ok",
+#                 "scan_id": request.scan_id,
+#                 "decision": request.decision,
+#             }
+
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.error("Failed to record human decision", error=str(e))
+#         raise HTTPException(status_code=500, detail="Failed to record decision")
+
+
 @router.get("/investigations/{scan_id}/report")
 async def generate_investigation_report(
     scan_id: str,

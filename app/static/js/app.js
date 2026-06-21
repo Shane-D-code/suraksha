@@ -257,7 +257,7 @@ function renderAnalysis(result) {
     const scansBody = document.getElementById('recent-scans-body');
     if (scansBody && exec?.recent_scans) {
       scansBody.innerHTML = exec.recent_scans.slice(0, 5).map(s => `
-        <div class="flex items-center justify-between p-2 rounded hover:bg-white/5">
+        <div class="dash-scan-item flex items-center justify-between p-2 rounded hover:bg-white/5 cursor-pointer ${s.scan_id === currentDashboardScanId ? 'selected bg-primary/10 border border-primary/30' : ''}" data-scan-id="${s.scan_id || ''}" onclick="window.selectDashboardScan('${s.scan_id || ''}')">
           <div class="flex items-center gap-2 min-w-0">
             <span class="material-symbols-outlined text-sm text-on-surface-variant">description</span>
             <span class="text-xs text-on-surface-variant truncate max-w-[140px]">${s.source || s.scan_id?.slice(0, 12) || '—'}</span>
@@ -294,6 +294,18 @@ function renderAnalysis(result) {
       document.getElementById('exec-compliance').textContent = exec.compliance_alerts > 5 ? 'Severe' : exec.compliance_alerts > 0 ? 'Moderate' : '—';
       document.getElementById('exec-regulatory').textContent = exec.high_risk > 5 ? 'Critical' : exec.high_risk > 0 ? 'Elevated' : '—';
     }
+
+    // Set the current dashboard scan ID from the most recent scan
+    if (exec?.recent_scans?.length) {
+      currentDashboardScanId = exec.recent_scans[0].scan_id || null;
+      // Highlight the selected scan in the recent scans list
+      document.querySelectorAll('#recent-scans-body .dash-scan-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.scanId === currentDashboardScanId);
+      });
+    } else {
+      currentDashboardScanId = null;
+    }
+    initDashboardDecisionButtons();
 
     document.getElementById('dash-loaded').dataset.loaded = '1';
   }
@@ -814,6 +826,21 @@ function renderAnalysis(result) {
       renderExtractedFields(result);
 
       showToast('Analysis complete', 'success');
+
+      // Store scan ID so dashboard buttons can reference it
+      if (result.scan_id) {
+        window._lastUploadScanId = result.scan_id;
+      }
+
+      // Force dashboard to refresh on next visit
+      const dashLoaded = document.getElementById('dash-loaded');
+      if (dashLoaded) {
+        dashLoaded.dataset.loaded = '0';
+        // If dashboard is the active page, reload it now
+        if (document.getElementById('page-dashboard')?.classList.contains('active')) {
+          loadDashboard();
+        }
+      }
 
     } catch (err) {
       console.error('runPipeline error:', err);
@@ -1874,6 +1901,7 @@ function renderAnalysis(result) {
 
   // ── Decision Buttons (Human Override) ──
   let currentScanId = null;
+  let currentDashboardScanId = null;
   const DECISION_MAP = {
     'approve-btn': 'APPROVED',
     'review-btn': 'UNDER_REVIEW',
@@ -1881,6 +1909,12 @@ function renderAnalysis(result) {
     'escalate-btn': 'ESCALATED',
   };
   const DECISION_BUTTONS = ['approve-btn', 'review-btn', 'reject-btn', 'escalate-btn'];
+  const DASHBOARD_DECISION_MAP = {
+    'dash-approve-btn': 'APPROVED',
+    'dash-review-btn': 'UNDER_REVIEW',
+    'dash-reject-btn': 'REJECTED',
+  };
+  const DASHBOARD_DECISION_BUTTONS = ['dash-approve-btn', 'dash-review-btn', 'dash-reject-btn'];
 
   function initDecisionButtons() {
     DECISION_BUTTONS.forEach(id => {
@@ -1965,6 +1999,86 @@ function renderAnalysis(result) {
       const btn = document.getElementById(id);
       if (btn) btn.disabled = disabled;
     });
+  }
+
+  // ── Dashboard Decision Buttons ──
+  function initDashboardDecisionButtons() {
+    let scanId = currentDashboardScanId;
+    if (!scanId && window._lastUploadScanId) {
+      scanId = window._lastUploadScanId;
+    }
+    DASHBOARD_DECISION_BUTTONS.forEach(id => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.disabled = !scanId;
+      if (btn.dataset.listenerAttached === 'true') return;
+      btn.addEventListener('click', handleDashboardDecisionClick);
+      btn.dataset.listenerAttached = 'true';
+    });
+  }
+
+  window.selectDashboardScan = function(scanId) {
+    currentDashboardScanId = scanId || null;
+    document.querySelectorAll('#recent-scans-body .dash-scan-item').forEach(el => {
+      el.classList.toggle('selected', el.dataset.scanId === scanId);
+      if (el.dataset.scanId === scanId) {
+        el.classList.add('bg-primary/10', 'border', 'border-primary/30');
+      } else {
+        el.classList.remove('bg-primary/10', 'border', 'border-primary/30');
+      }
+    });
+    initDashboardDecisionButtons();
+    showToast(`Scan ${scanId ? scanId.slice(0, 12) + '…' : ''} selected`, 'info');
+  };
+
+  async function handleDashboardDecisionClick(e) {
+    const btn = e.currentTarget;
+    const decision = DASHBOARD_DECISION_MAP[btn.id];
+    let scanId = currentDashboardScanId;
+    if (!scanId && window._lastUploadScanId) {
+      scanId = window._lastUploadScanId;
+    }
+
+    if (!scanId) {
+      showToast('No scan selected — upload a document first', 'error');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> SUBMITTING...';
+
+    try {
+      const res = await fetch('/api/v1/human-decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scan_id: scanId, decision }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      showToast(`Decision ${decision} saved for ${scanId.slice(0, 12)}`, 'success');
+
+      // Reset button text
+      const label = Object.keys(DASHBOARD_DECISION_MAP).find(k => DASHBOARD_DECISION_MAP[k] === decision) || '';
+      const originalLabels = { 'dash-approve-btn': 'APPROVE', 'dash-review-btn': 'REVIEW', 'dash-reject-btn': 'REJECT' };
+      btn.innerHTML = originalLabels[btn.id] || decision;
+      btn.disabled = false;
+
+      // Mark the selected scan in the recent scans list
+      document.querySelectorAll('#recent-scans-body .dash-scan-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.scanId === scanId);
+      });
+
+      // Reload dashboard panels to reflect decision
+      setTimeout(() => loadDashboard(), 1000);
+    } catch (err) {
+      showToast('Failed to save decision: ' + err.message, 'error');
+      const originalLabels = { 'dash-approve-btn': 'APPROVE', 'dash-review-btn': 'REVIEW', 'dash-reject-btn': 'REJECT' };
+      btn.innerHTML = originalLabels[btn.id] || decision;
+      btn.disabled = false;
+    }
   }
 
   // ── Chart.js Renderers ──

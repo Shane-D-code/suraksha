@@ -23,13 +23,13 @@ logger = structlog.get_logger(__name__)
 
 # --- Module weights (must sum to 1.0) ---
 FINAL_WEIGHTS = {
-    "banking_authenticity": 0.25,
-    "financial_integrity": 0.25,
-    "compliance": 0.15,
-    "anomaly": 0.10,
+    "banking_authenticity": 0.20,
+    "financial_integrity": 0.15,
+    "compliance": 0.30,
+    "anomaly": 0.15,
     "xai": 0.10,
     "signature": 0.05,
-    "ocr_reliability": 0.10,
+    "ocr_reliability": 0.05,
 }
 
 SEVERITY_MAP = {
@@ -56,6 +56,10 @@ RISK_FLOORS = {
     "currency_mismatch": 50,
     "bank_identity_mismatch": 90,
     "template_watermark": 95,
+    "pending_kyc": 60,
+    "large_cash_deposit": 70,
+    "offshore_transfer": 85,
+    "multiple_large_cash_deposits": 90,
 }
 
 SEVERITY_LABELS = ["Safe", "Review Required", "Suspicious", "High Risk"]
@@ -657,7 +661,7 @@ def aggregate_risks(input_data: AggregationInput) -> AggregationResponse:
         ))
 
         # Generate findings for this module
-        if mod["score"] > 15:
+        if mod["score"] > 5:
             mod_severity = "HIGH" if mod["score"] > 60 else "MEDIUM" if mod["score"] > 30 else "LOW"
             if mod["findings"]:
                 for finding_dict in mod["findings"]:
@@ -805,6 +809,21 @@ def aggregate_risks(input_data: AggregationInput) -> AggregationResponse:
         "template_watermark": has_template,
     }
     for condition_name, active in finding_to_floor.items():
+        if active:
+            risk_score = max(risk_score, RISK_FLOORS.get(condition_name, 0))
+
+    # ── AML Risk Floors ────────────────────────────────────────────
+    compliance_findings = (input_data.compliance_result or {}).get("findings", [])
+    aml_finding_texts = [f.get("finding_description", "") for f in compliance_findings]
+    aml_text = " ".join(aml_finding_texts).lower()
+
+    aml_floors = {
+        "pending_kyc": "kyc verification incomplete" in aml_text or "kyc status: pending" in aml_text,
+        "large_cash_deposit": "large cash deposit" in aml_text,
+        "offshore_transfer": "offshore jurisdiction" in aml_text or "cayman" in aml_text or "panama" in aml_text,
+        "multiple_large_cash_deposits": "multiple large cash deposits" in aml_text,
+    }
+    for condition_name, active in aml_floors.items():
         if active:
             risk_score = max(risk_score, RISK_FLOORS.get(condition_name, 0))
 
