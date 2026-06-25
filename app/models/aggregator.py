@@ -85,6 +85,57 @@ class AggregationResponse(BaseModel):
     # ── Case-Based Reasoning ─────────────────────────────────────────
     similar_cases: Optional[List[dict]] = Field(None, description="Similar past cases with outcomes for precedent-based decision support")
 
+    # ── Evidence Correlation (Feature 1) ──────────────────────────────
+    evidence_correlation: Optional[dict] = Field(None, description="Correlated evidence across all pipeline stages: root_cause, fraud_chain, confidence, primary_reason")
+
+    # ── Pipeline Timeline (Feature 2) ─────────────────────────────────
+    timeline: Optional[List[dict]] = Field(None, description="Per-stage timing: name, duration_ms, status")
+
+    # ── Module Health Report (Feature 6) ──────────────────────────────
+    module_health: Optional[List[dict]] = Field(None, description="Diagnostic health report per module: name, status, time_ms, errors")
+
+    # ── Root Cause (Feature 4) ────────────────────────────────────────
+    root_cause: Optional[str] = Field(None, description="Concise root cause explanation for the investigation outcome")
+
+    # ── Fraud Categories (Feature 5) ──────────────────────────────────
+    fraud_categories: Optional[dict] = Field(None, description="Classified fraud categories: primary, secondary")
+
+    # ── Decision Card (Feature 7) ─────────────────────────────────────
+    decision_card: Optional[dict] = Field(None, description="Decision summary card: decision, risk, confidence, primary_reason, review_team")
+
+    # ── Pipeline Progress (Feature 10) ────────────────────────────────
+    pipeline_progress: Optional[List[dict]] = Field(None, description="Pipeline stage completion status for frontend animation")
+
+    # ── Investigation Summary (Feature 11) ────────────────────────────
+    investigation_summary: Optional[dict] = Field(None, description="Full investigation report: executive_summary, technical_summary, evidence_summary, business_impact, recommended_action")
+
+    # ── Enriched Findings (Features 3 + 8: Confidence Engine + Evidence Weighting) ──
+    enriched_findings: Optional[List[dict]] = Field(None, description="Every finding enriched with confidence, severity, evidence_strength, weight, and source")
+
+    # ── Financial Explanation (Feature 9) ─────────────────────────────
+    financial_explanation: Optional[dict] = Field(None, description="Financial breakdown when integrity passes: opening, credits, debits, closing, formula verification")
+
+    # ── Investigation Narrative ────────────────────────────────────────
+    investigation_narrative: Optional[dict] = Field(None, description="Deterministic investigation story: executive_summary, technical_summary, business_summary, recommendation_reason")
+
+    # ── Evidence Chain (cause-effect correlation) ──────────────────────
+    evidence_chain: Optional[dict] = Field(None, description="Cause-effect evidence chain: fraud_chain (list of {cause, effect}), root_cause, confidence")
+
+    # ── Rule Trace ─────────────────────────────────────────────────────
+    rule_trace: Optional[List[dict]] = Field(None, description="Append-only trace of every rule that fired: {rule_id, module, reason, impact, final_effect}")
+
+    # ── Risk Waterfall ─────────────────────────────────────────────────
+    risk_waterfall: Optional[List[dict]] = Field(None, description="Cumulative risk visualization metadata: [{stage, score|delta, total}]")
+
+    # ── Evidence Tree ──────────────────────────────────────────────────
+    evidence_tree: Optional[dict] = Field(None, description="Hierarchical evidence tree grouping findings: {categories: [{label, status, checks}]}")
+
+    # ── Fraud Fingerprint ──────────────────────────────────────────────
+    fraud_fingerprint: Optional[str] = Field(None, description="Deterministic fraud fingerprint string (e.g. AUTH3-OCR1-META2-AML0-COMP0-FIN1-ANOM0-SIG0-PAT0)")
+
+    # ── Executive Investigation Report ─────────────────────────────────
+    executive_report: Optional[dict] = Field(None, description="Comprehensive executive investigation report: executive_summary, technical_findings, evidence_summary, timeline_overview, compliance, recommendations, decision")
+
 
 class AggregationInput(BaseModel):
     """Wraps the output of each detection module for aggregation."""

@@ -15,6 +15,7 @@ import structlog
 from fastapi import APIRouter, File, UploadFile, HTTPException, status
 from sqlalchemy import select
 
+from app.services.redis import get_redis_client, delete_cache
 from app.models.anomaly import FieldFeature, AnomalyDetectionRequest
 from app.services.database import get_db_session
 from app.models.db import Scan as DBScan, RiskLevelEnum, ComplianceAlert
@@ -27,6 +28,20 @@ from app.services.risk_aggregator import aggregate_risks
 from app.services.xai_engine import generate_explanations
 from app.services.banking_authenticity import analyze_bank_statement, ValidationStatus
 from app.services.signature_intelligence import extract_signature_regions
+from app.services.evidence_correlation import correlate_evidence
+from app.services.timeline import create_timeline_recorder
+from app.services.confidence_engine import enrich_findings
+from app.services.root_cause import generate_root_cause
+from app.services.fraud_categories import classify_fraud
+from app.services.decision_card import generate_decision_card
+from app.services.investigation_summary import generate_investigation_summary
+from app.services.investigation_narrative import generate_narrative
+from app.services.evidence_correlation import build_evidence_chain
+from app.services.rule_trace import build_rule_trace, build_risk_waterfall
+from app.services.evidence_tree import build_evidence_tree
+from app.services.fraud_fingerprint import build_fraud_fingerprint
+from app.services.executive_report import generate_executive_report
+from app.services.similar_cases import build_current_case_profile, find_similar_cases, _extract_case_from_meta
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -432,6 +447,8 @@ async def upload_document(file: UploadFile = File(...)):
         _pdf_error("EMPTY_FILE", "Uploaded file is empty")
 
     start = time.time()
+    timeline_recorder = create_timeline_recorder()
+    timeline_recorder.start_stage("Upload")
     logger.info("UPLOAD RECEIVED", filename=file.filename, ext=ext, size_bytes=len(content), content_type=file.content_type)
 
     # ── PDF validation before extraction ──
@@ -470,6 +487,9 @@ async def upload_document(file: UploadFile = File(...)):
     char_count = len(text_content)
     page_count = meta.get('page_count', 1)
     size_kb = round(len(content) / 1024, 2)
+
+    timeline_recorder.end_stage("SUCCESS")
+    timeline_recorder.start_stage("Metadata")
 
     # Build audit trail
     now_iso = datetime.utcnow().isoformat()
@@ -532,6 +552,9 @@ async def upload_document(file: UploadFile = File(...)):
 
         logger.info("FRAUD_PATTERNS_DETECTED", count=len(fraud_patterns), patterns=[p["pattern"] for p in fraud_patterns])
 
+    timeline_recorder.end_stage("SUCCESS")
+    timeline_recorder.start_stage("Authenticity")
+
     # ----- embedded image / signature detection -----
     embedded_image_count = 0
     if ext == '.pdf':
@@ -581,6 +604,10 @@ async def upload_document(file: UploadFile = File(...)):
         f.finding_type in ("low_confidence", "missing_field") and f.category == FindingCategory.OCR
         for f in xai_inputs
     )
+
+    banking_result = None
+    signature_intel_result = None
+    sig_findings = []
 
     if ocr_insufficient:
         logger.info("OCR_INSUFFICIENT", text_length=char_count, word_count=word_count,
@@ -653,6 +680,9 @@ async def upload_document(file: UploadFile = File(...)):
         if embedded_image_count > 0:
             logger.info("SIGNATURE_FINDINGS", count=embedded_image_count,
                         source="pdf_embedded_images", note="no reference for comparison")
+
+        timeline_recorder.end_stage("SUCCESS")
+        timeline_recorder.start_stage("AML")
 
         # ----- compliance check (using XAI + anomaly + metadata findings) -----
         compliance_result = None
@@ -795,6 +825,9 @@ async def upload_document(file: UploadFile = File(...)):
         else:
             ocr_reliability = 0.5
 
+        timeline_recorder.end_stage("SUCCESS")
+        timeline_recorder.start_stage("Risk")
+
         # ----- risk aggregation -----
         logger.info("AGGREGATOR INPUT",
                     xai_findings=len(xai_findings),
@@ -813,6 +846,43 @@ async def upload_document(file: UploadFile = File(...)):
             signature_intel_result=signature_intel_result,
             ocr_reliability=ocr_reliability,
         ))
+
+        # ── Extract finding lists for downstream modules ──
+        banking_findings_list = []
+        compliance_findings_list = []
+        anomaly_findings_list = []
+        try:
+            if banking_result:
+                banking_findings_list = banking_result.get("findings", []) or []
+            if compliance_result:
+                compliance_findings_list = compliance_result.get("findings", []) or []
+            if anomaly_result:
+                anomaly_findings_list = anomaly_result.get("findings", []) or []
+        except Exception as e:
+            logger.warning("Finding list extraction failed", error=str(e))
+
+        # 0. Rule Trace & Risk Waterfall (visualization metadata — no scoring impact)
+        try:
+            result.rule_trace = build_rule_trace(
+                banking_findings=banking_findings_list,
+                compliance_findings=compliance_findings_list,
+                xai_findings=xai_findings,
+                anomaly_findings=anomaly_findings_list,
+                signature_findings=sig_findings,
+                fraud_patterns=fraud_patterns,
+                risk_score=result.risk_score,
+            )
+            # Convert risk_categories to plain dicts for the waterfall builder
+            rc_dicts = [rc.model_dump() for rc in (result.risk_categories or [])]
+            dp_list = result.decision_path or []
+            result.risk_waterfall = build_risk_waterfall(
+                risk_categories=rc_dicts,
+                decision_path=dp_list,
+                risk_score=result.risk_score,
+                original_score=result.original_score,
+            )
+        except Exception as e:
+            logger.warning("Rule trace / risk waterfall failed", error=str(e))
 
         # Populate extracted_fields from banking & transaction analysis
         extracted = {}
@@ -887,6 +957,236 @@ async def upload_document(file: UploadFile = File(...)):
                 extracted["Subject"] = meta["subject"]
         if extracted:
             result.extracted_fields = extracted
+
+    timeline_recorder.end_stage("SUCCESS")
+    timeline_recorder.start_stage("Decision")
+
+    # ── New Intelligence Modules (optional, non-blocking) ──────────────
+
+    # 1. Evidence Correlation
+    try:
+        result.evidence_correlation = correlate_evidence(
+            xai_findings=xai_findings,
+            anomaly_findings=anomaly_findings_list,
+            compliance_findings=compliance_findings_list,
+            banking_findings=banking_findings_list,
+            signature_findings=sig_findings,
+            fraud_patterns=fraud_patterns,
+            metadata=meta,
+        )
+    except Exception as e:
+        logger.warning("Evidence correlation failed", error=str(e))
+
+    # 2. Evidence Tree
+    try:
+        result.evidence_tree = build_evidence_tree(
+            banking_result=banking_result,
+            banking_findings=banking_findings_list,
+            compliance_findings=compliance_findings_list,
+            xai_findings=xai_findings,
+            anomaly_findings=anomaly_findings_list,
+        )
+    except Exception as e:
+        logger.warning("Evidence tree failed", error=str(e))
+
+    # 3. Timeline
+    try:
+        timeline_recorder.end_stage("SUCCESS")
+        result.timeline = timeline_recorder.get_timeline()
+        result.module_health = timeline_recorder.get_module_health()
+        result.pipeline_progress = timeline_recorder.get_pipeline_progress()
+    except Exception as e:
+        logger.warning("Timeline recording failed", error=str(e))
+
+    # 4. Confidence Engine + Evidence Weighting (Features 3 & 8)
+    try:
+        result.enriched_findings = enrich_findings(
+            banking_findings=banking_findings_list,
+            compliance_findings=compliance_findings_list,
+            anomaly_findings=anomaly_findings_list,
+            xai_findings=xai_findings,
+            signature_findings=sig_findings,
+        )
+    except Exception as e:
+        logger.warning("Confidence engine failed", error=str(e))
+
+    # 4. Root Cause Generator
+    try:
+        result.root_cause = generate_root_cause(
+            banking_findings=banking_findings_list,
+            compliance_findings=compliance_findings_list,
+            anomaly_findings=anomaly_findings_list,
+            xai_findings=xai_findings,
+            fraud_patterns=fraud_patterns,
+            risk_score=result.risk_score,
+        )
+    except Exception as e:
+        logger.warning("Root cause generation failed", error=str(e))
+
+    # 5. Fraud Category Classifier
+    try:
+        result.fraud_categories = classify_fraud(
+            banking_findings=banking_findings_list,
+            compliance_findings=compliance_findings_list,
+            xai_findings=xai_findings,
+            signature_findings=sig_findings,
+            fraud_patterns=fraud_patterns,
+        )
+    except Exception as e:
+        logger.warning("Fraud category classification failed", error=str(e))
+
+    # 7. Decision Card
+    try:
+        result.decision_card = generate_decision_card(
+            risk_score=result.risk_score,
+            fraud_confidence=result.fraud_confidence,
+            fraud_categories=result.fraud_categories,
+            root_cause=result.root_cause,
+            existing_decision=result.decision,
+            banking_findings=banking_findings_list,
+        )
+    except Exception as e:
+        logger.warning("Decision card generation failed", error=str(e))
+
+    # 11. Investigation Summary
+    try:
+        result.investigation_summary = generate_investigation_summary(
+            banking_findings=banking_findings_list,
+            compliance_findings=compliance_findings_list,
+            anomaly_findings=anomaly_findings_list,
+            xai_findings=xai_findings,
+            fraud_patterns=fraud_patterns,
+            risk_score=result.risk_score,
+            fraud_confidence=result.fraud_confidence,
+            root_cause=result.root_cause,
+            fraud_categories=result.fraud_categories,
+            decision_card=result.decision_card,
+            banking_result=banking_result,
+        )
+    except Exception as e:
+        logger.warning("Investigation summary failed", error=str(e))
+
+    # 12. Investigation Narrative
+    try:
+        sig_intel_for_narrative = None
+        if signature_intel_result:
+            sig_intel_for_narrative = signature_intel_result
+        result.investigation_narrative = generate_narrative(
+            xai_findings=xai_findings,
+            banking_findings=banking_findings_list,
+            banking_result=banking_result,
+            compliance_findings=compliance_findings_list,
+            signature_intel_result=sig_intel_for_narrative,
+            fraud_patterns=fraud_patterns,
+            meta=meta,
+            word_count=word_count,
+            risk_score=result.risk_score,
+            decision=result.decision,
+            override_reason=result.override_reason,
+        )
+    except Exception as e:
+        logger.warning("Investigation narrative failed", error=str(e))
+
+    # 13. Evidence Chain (cause-effect)
+    try:
+        result.evidence_chain = build_evidence_chain(
+            xai_findings=xai_findings,
+            anomaly_findings=anomaly_findings_list,
+            compliance_findings=compliance_findings_list,
+            banking_findings=banking_findings_list,
+            signature_findings=sig_findings,
+            fraud_patterns=fraud_patterns,
+            ocr_insufficient=ocr_insufficient,
+        )
+    except Exception as e:
+        logger.warning("Evidence chain failed", error=str(e))
+
+    # 14. Fraud Fingerprint
+    try:
+        result.fraud_fingerprint = build_fraud_fingerprint(
+            banking_findings=banking_findings_list,
+            compliance_findings=compliance_findings_list,
+            xai_findings=xai_findings,
+            anomaly_findings=anomaly_findings_list,
+            signature_findings=sig_findings,
+            fraud_patterns=fraud_patterns,
+            ocr_reliability=ocr_reliability,
+            banking_result=banking_result,
+        )
+    except Exception as e:
+        logger.warning("Fraud fingerprint failed", error=str(e))
+
+    # 15. Similar Investigations (DB-backed, deterministic)
+    try:
+        current_profile = build_current_case_profile(
+            risk_score=result.risk_score,
+            decision=result.decision,
+            bank_name=banking_result.get("bank_name") if banking_result else None,
+            banking_findings=banking_findings_list,
+            fraud_categories=result.fraud_categories,
+        )
+    except Exception as e:
+        logger.warning("Similar investigations profile failed", error=str(e))
+        current_profile = None
+
+    # 16. Executive Investigation Report
+    try:
+        result.executive_report = generate_executive_report(
+            risk_score=result.risk_score,
+            severity=result.severity,
+            decision=result.decision,
+            override_reason=result.override_reason,
+            original_score=result.original_score,
+            banking_result=banking_result,
+            banking_findings=banking_findings_list,
+            compliance_findings=compliance_findings_list,
+            xai_findings=xai_findings,
+            anomaly_findings=anomaly_findings_list,
+            evidence_correlation=result.evidence_correlation,
+            root_cause=result.root_cause,
+            fraud_categories=result.fraud_categories,
+            decision_card=result.decision_card,
+            investigation_summary=result.investigation_summary,
+            timeline=result.timeline,
+            risk_categories=result.risk_categories,
+            findings=result.findings,
+            fraud_confidence=result.fraud_confidence,
+            detection_confidence=result.detection_confidence,
+            fraud_risk=result.fraud_risk,
+            evidence_quality=result.evidence_quality,
+            recommendations=result.recommendations,
+        )
+    except Exception as e:
+        logger.warning("Executive report failed", error=str(e))
+
+    # 9. Financial Explanation
+    if banking_result and banking_result.get("transaction_count", 0) > 0:
+        try:
+            opening = banking_result.get("opening_balance")
+            credits = banking_result.get("total_credits")
+            debits = banking_result.get("total_debits")
+            closing = banking_result.get("closing_balance")
+            if any(v is not None for v in [opening, credits, debits, closing]):
+                formula_valid = True
+                note = "Financial integrity checks passed"
+                if all(v is not None for v in [opening, credits, debits, closing]):
+                    expected = round(opening + credits - debits, 2)
+                    formula_valid = abs(expected - closing) < 1.0
+                    if not formula_valid:
+                        note = f"Formula mismatch: {opening} + {credits} - {debits} = {expected}, but closing balance is {closing}"
+                    else:
+                        note = f"Formula verified: {opening} + {credits} - {debits} = {closing}"
+                result.financial_explanation = {
+                    "opening_balance": opening,
+                    "credits": credits,
+                    "debits": debits,
+                    "closing_balance": closing,
+                    "formula": "Opening + Credits - Debits = Closing Balance",
+                    "verification": "PASS" if formula_valid else "FAIL",
+                    "note": note,
+                }
+        except Exception as e:
+            logger.warning("Financial explanation failed", error=str(e))
 
     elapsed = int((time.time() - start) * 1000)
     logger.info("Document uploaded and analysed",
@@ -985,8 +1285,118 @@ async def upload_document(file: UploadFile = File(...)):
 
             await session.commit()
             logger.info("Compliance alerts persisted", count=len(compliance_result.findings) if compliance_result else 0)
+
+            # Publish scan:completed event and invalidate dashboard cache
+            try:
+                redis = await get_redis_client()
+                await redis.publish("phishguard:scan_events", json.dumps({
+                    "event": "scan:completed",
+                    "scan_id": scan_id,
+                    "data": {
+                        "risk_score": result.risk_score,
+                        "threat_level": result.severity,
+                        "processing_time_ms": 0,
+                        "fraud_detected": 1 if result.risk_score >= 70 else 0,
+                        "high_risk": 1 if result.risk_score >= 70 else 0,
+                        "compliance_alert": 1 if (compliance_result and compliance_result.findings) else 0,
+                    }
+                }))
+                await delete_cache("dashboard:executive")
+
+                compliance_findings = compliance_result.findings if compliance_result else []
+                ca_count = len(compliance_findings)
+                sevs = [cf.compliance_severity.value for cf in compliance_findings]
+                risk_for_dec = result.risk_score or int(result.fraud_confidence)
+                primary_reason = (result.findings[0].finding[:200] if result.findings else (result.root_cause or "No significant findings"))
+                reco = (result.recommendations[0] if result.recommendations else (
+                    "Manual verification required." if risk_for_dec >= 50 else "Standard processing — no action required."
+                ))
+
+                await redis.publish("phishguard:scan_events", json.dumps({
+                    "event": "executive_decision_updated",
+                    "scan_id": scan_id,
+                    "data": {
+                        "fraud_probability": float(result.fraud_confidence),
+                        "risk_score": risk_for_dec,
+                        "decision": result.decision or ("REJECT" if risk_for_dec >= 80 else "REVIEW" if risk_for_dec >= 50 else "APPROVE"),
+                        "confidence": round(result.fraud_confidence, 1),
+                        "compliance": None if ca_count == 0 else ("Severe" if any(s in ("CRITICAL", "HIGH") for s in sevs) else "Moderate"),
+                        "regulatory_risk": None if ca_count == 0 else ("Critical" if any(s == "CRITICAL" for s in sevs) else "High" if any(s == "HIGH" for s in sevs) else "Elevated"),
+                        "primary_reason": primary_reason,
+                        "recommendation": reco,
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }
+                }))
+                await delete_cache("dashboard:executive-decision")
+
+                # Signal dashboard statistics refresh (frontend re-fetches full data)
+                await redis.publish("phishguard:scan_events", json.dumps({
+                    "event": "dashboard_statistics_updated",
+                    "scan_id": scan_id,
+                    "data": {"trigger": "investigation_completed"}
+                }))
+                await delete_cache("dashboard:statistics")
+                await delete_cache("compliance:dashboard:30")
+
+                # Signal compliance dashboard refresh
+                await redis.publish("phishguard:scan_events", json.dumps({
+                    "event": "compliance_dashboard_updated",
+                    "scan_id": scan_id,
+                    "data": {"trigger": "scan_completed", "risk_score": result.risk_score}
+                }))
+            except Exception:
+                logger.warning("Redis publish failed", exc_info=True)
+
+            # Query historical cases for similarity matching
+            if current_profile:
+                try:
+                    stmt = select(DBScan).where(DBScan.scan_id != scan_id).order_by(DBScan.created_at.desc()).limit(50)
+                    db_rows = await session.execute(stmt)
+                    historical_cases = []
+                    for row in db_rows.scalars():
+                        meta = row.meta or {}
+                        case = _extract_case_from_meta(dict(meta), row.scan_id, row.created_at)
+                        historical_cases.append(case)
+                    similar = find_similar_cases(current_profile, historical_cases, top_k=5)
+                    result.similar_cases = similar if similar else None
+                    logger.info("Similar investigations found", count=len(similar) if similar else 0)
+                except Exception as e:
+                    logger.warning("Similar investigations query failed", error=str(e))
+
             break
     except Exception as e:
         logger.error("Failed to persist document scan", error=str(e))
 
     return result
+
+
+@router.get("/investigations/by-fingerprint/{fingerprint}")
+async def search_by_fingerprint(fingerprint: str, limit: int = 10):
+    """
+    Search for past investigations with matching fraud fingerprint.
+    """
+    from fastapi.responses import JSONResponse
+    try:
+        async for session in get_db_session():
+            stmt = (
+                select(DBScan)
+                .where(DBScan.meta["fraud_fingerprint"].as_string() == fingerprint)
+                .order_by(DBScan.created_at.desc())
+                .limit(limit)
+            )
+            db_rows = await session.execute(stmt)
+            results = []
+            for row in db_rows.scalars():
+                meta = row.meta or {}
+                results.append({
+                    "scan_id": row.scan_id,
+                    "date": row.created_at.isoformat() if row.created_at else None,
+                    "risk": row.risk.value if row.risk else None,
+                    "fingerprint": meta.get("fraud_fingerprint"),
+                    "decision": meta.get("audit_trail", {}).get("decision_card", {}).get("decision"),
+                })
+            break
+        return JSONResponse(content={"fingerprint": fingerprint, "count": len(results), "cases": results})
+    except Exception as e:
+        logger.error("Fingerprint search failed", error=str(e))
+        return JSONResponse(content={"fingerprint": fingerprint, "count": 0, "cases": [], "error": str(e)}, status_code=500)

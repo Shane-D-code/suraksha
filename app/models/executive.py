@@ -39,3 +39,49 @@ class ExecutiveDashboardResponse(BaseModel):
     risk_distribution: RiskDistribution = Field(default_factory=RiskDistribution)
     trend_analysis: List[TrendPoint] = Field(default_factory=list)
     recent_scans: List[RecentScanEntry] = Field(default_factory=list)
+
+
+class ExecutiveDecisionResponse(BaseModel):
+    fraud_probability: Optional[float] = None
+    risk_score: Optional[int] = None
+    decision: Optional[str] = None
+    confidence: Optional[float] = None
+    compliance: Optional[str] = None
+    regulatory_risk: Optional[str] = None
+    primary_reason: Optional[str] = None
+    recommendation: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class DashboardStatisticsResponse(BaseModel):
+    documents_scanned: int = 0
+    fraud_detected: int = 0
+    high_risk: int = 0
+    compliance_alerts: int = 0
+    average_risk: float = 0.0
+    updated_at: Optional[str] = None
+
+
+class AnalystDecisionRequest(BaseModel):
+    decision: str  # APPROVED / MANUAL_REVIEW / REJECTED
+    reviewer_notes: Optional[str] = None
+    assigned_team: Optional[str] = None
+    notify_compliance: bool = False
+    require_branch_verification: bool = False
+    escalate_manager: bool = False
+    freeze_processing: bool = False
+
+
+class AnalystDecisionResponse(BaseModel):
+    scan_id: str = ""
+    decision: Optional[str] = None
+    reviewer_notes: Optional[str] = None
+    assigned_team: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    review_completed_at: Optional[str] = None
+    review_status: Optional[str] = None
+    notify_compliance: bool = False
+    require_branch_verification: bool = False
+    escalate_manager: bool = False
+    freeze_processing: bool = False
+    message: Optional[str] = None

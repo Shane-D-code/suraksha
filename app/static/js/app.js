@@ -207,30 +207,296 @@ function renderAnalysis(result) {
       settings: loadSettings,
     };
     if (loaders[basePage]) loaders[basePage]();
+    connectWebSocket();
   }
 
   // ── HOME (static landing page — no dynamic data needed) ──
   function loadHome() {}
 
+  // ── WebSocket Live Updates ──
+  let wsClient = null;
+  let wsHeartbeatTimer = null;
+
+  function connectWebSocket() {
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) return;
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${protocol}//${location.host}/api/v1/ws`;
+    try {
+      wsClient = new WebSocket(url);
+    } catch (e) {
+      console.warn('[WS] Connection failed, retrying in 10s', e);
+      setTimeout(connectWebSocket, 10000);
+      return;
+    }
+    wsClient.onopen = () => {
+      console.log('[WS] Connected');
+      // Subscribe to live dashboard channels
+      wsClient.send(JSON.stringify({ event: 'subscribe', data: { channel: 'scans' } }));
+      wsClient.send(JSON.stringify({ event: 'subscribe', data: { channel: 'stats' } }));
+      wsClient.send(JSON.stringify({ event: 'subscribe', data: { channel: 'threats' } }));
+    };
+    wsClient.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        const event = msg.event || msg.event_type;
+        if (!event) return;
+        // Heartbeat reply
+        if (event === 'connection:ack') {
+          const interval = (msg.data && msg.data.heartbeat_interval) || 30;
+          if (wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
+          wsHeartbeatTimer = setInterval(() => {
+            if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+              wsClient.send(JSON.stringify({ event: 'heartbeat', data: {} }));
+            }
+          }, interval * 1000);
+          return;
+        }
+        if (event === 'heartbeat') return;
+        // Dashboard live refresh
+        if (event === 'scan:completed' || event === 'stats:update') {
+          refreshDashboard();
+        }
+        if (event === 'executive_decision_updated') {
+          updateExecutiveDecision(msg.data);
+        }
+        if (event === 'investigation_decision_updated') {
+          // If we're viewing an investigation, refresh it
+          const hash = window.location.hash;
+          if (hash && hash.startsWith('#investigations/')) {
+            const currentScanId = hash.replace('#investigations/', '').split('?')[0];
+            if (currentScanId === msg.data?.scan_id) {
+              renderInvestigationDetail(currentScanId);
+            }
+          }
+          // Refresh dashboard
+          const dashLoaded = document.getElementById('dash-loaded');
+          if (dashLoaded) dashLoaded.dataset.loaded = '0';
+          // Refresh compliance
+          refreshCompliance();
+        }
+        if (event === 'compliance_dashboard_updated') {
+          refreshCompliance();
+        }
+        if (event === 'dashboard_statistics_updated') {
+          refreshDashboardStats();
+        }
+        if (event === 'threat:detected') {
+          refreshThreats();
+        }
+      } catch (e) {
+        // ignore parse errors
+      }
+    };
+    wsClient.onclose = () => {
+      console.log('[WS] Disconnected, reconnecting in 10s');
+      if (wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
+      wsClient = null;
+      setTimeout(connectWebSocket, 10000);
+    };
+    wsClient.onerror = () => {
+      wsClient.close();
+    };
+  }
+
+  function refreshDashboard() {
+    const loadedEl = document.getElementById('dash-loaded');
+    if (loadedEl) loadedEl.dataset.loaded = '0';
+    loadDashboard();
+  }
+
+  function refreshCompliance() {
+    _complianceData = null;
+    const loadedEl = document.getElementById('comp-loaded');
+    if (loadedEl) loadedEl.dataset.loaded = '0';
+    if (document.getElementById('page-compliance')?.classList.contains('active')) {
+      loadCompliance();
+    }
+  }
+
+  function refreshDashboardStats() {
+    api('GET', '/dashboard/statistics').catch(() => null).then(stats => {
+      if (!stats) return;
+      animateKPI('kpi-scanned', stats.documents_scanned || 0);
+      animateKPI('kpi-fraud', stats.fraud_detected || 0);
+      animateKPI('kpi-highrisk', stats.high_risk || 0);
+      animateKPI('kpi-compliance', stats.compliance_alerts || 0);
+      animateKPI('kpi-avgscore', stats.average_risk != null ? Math.round(stats.average_risk) : 0);
+    });
+  }
+
+  function refreshThreats() {
+    api('GET', '/dashboard/live-threats?limit=10').catch(() => null).then(threats => {
+      const body = document.getElementById('live-threats-body');
+      if (!body) return;
+      if (threats && threats.length) {
+        body.innerHTML = threats.slice(0, 5).map(t => {
+          const risk = t.risk_score > 0.7 ? 'HIGH' : t.risk_score > 0.4 ? 'MEDIUM' : 'LOW';
+          return `<div class="flex items-center justify-between p-2 rounded hover:bg-white/5">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-1.5 h-1.5 rounded-full ${risk === 'HIGH' ? 'bg-error' : risk === 'MEDIUM' ? 'bg-yellow-500' : 'bg-tertiary'}"></span>
+              <span class="text-xs text-on-surface-variant truncate max-w-[140px]">${t.domain || t.source || 'Unknown'}</span>
+            </div>
+            <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${risk === 'HIGH' ? 'bg-error/20 text-error' : risk === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-tertiary/20 text-tertiary'}">${risk}</span>
+          </div>`;
+        }).join('');
+      } else {
+        body.innerHTML = '<div class="text-on-surface-variant/50 text-xs text-center py-6">No active threats</div>';
+      }
+    });
+  }
+
+  function updatePipelineStatus(scan) {
+    const pipeline = document.getElementById('dash-pipeline');
+    if (!pipeline) return;
+    const steps = pipeline.querySelectorAll('.pipeline-steps > div');
+    const risk = (scan.risk || '').toLowerCase();
+    const isHigh = risk === 'high';
+    steps.forEach((step, i) => {
+      const icon = step.querySelector('.material-symbols-outlined');
+      const label = step.querySelector('span:last-child');
+      const circle = step.querySelector('div:first-child');
+      if (!icon || !circle) return;
+      // Show latest scan status visually
+      if (isHigh && i < 5) {
+        circle.className = 'w-10 h-10 rounded-full bg-error/20 border border-error/40 text-error flex items-center justify-center';
+        icon.className = 'material-symbols-outlined text-xl';
+      } else {
+        circle.className = 'w-10 h-10 rounded-full bg-primary/10 border border-primary/30 text-primary flex items-center justify-center';
+        icon.className = 'material-symbols-outlined text-xl';
+      }
+    });
+  }
+
+  function updatePipelineWithTimeline(timeline) {
+    const pipeline = document.getElementById('dash-pipeline');
+    if (!pipeline) return;
+    const steps = pipeline.querySelectorAll('.pipeline-steps > div');
+    // Map timeline stage names to pipeline step indices
+    const stageMap = { 'Metadata': 0, 'Visual': 1, 'OCR': 2, 'Numeric': 3, 'Signature': 4, 'Compliance': 5 };
+    timeline.forEach(t => {
+      const idx = stageMap[t.name];
+      if (idx == null || idx >= steps.length) return;
+      const step = steps[idx];
+      const circle = step.querySelector('div:first-child');
+      const label = step.querySelector('span:last-child');
+      if (!circle) return;
+      const isDone = t.status === 'SUCCESS' || t.status === 'completed';
+      const isFail = t.status === 'FAILED' || t.status === 'failed';
+      if (isDone) {
+        circle.className = 'w-10 h-10 rounded-full bg-primary/20 border border-primary/40 text-primary flex items-center justify-center';
+        circle.title = (t.duration_ms || 0) + 'ms';
+      } else if (isFail) {
+        circle.className = 'w-10 h-10 rounded-full bg-error/20 border border-error/40 text-error flex items-center justify-center';
+      }
+      if (label) {
+        const ms = t.duration_ms ? `${t.duration_ms.toFixed(0)}ms` : '';
+        label.textContent = t.name + (ms ? ` (${ms})` : '');
+      }
+    });
+  }
+
+  // ── EXECUTIVE DECISION CARD ──
+  function updateExecutiveDecision(d) {
+    if (!d) {
+      document.getElementById('exec-fraud-prob').textContent = '—';
+      document.getElementById('exec-compliance').textContent = '—';
+      document.getElementById('exec-regulatory').textContent = '—';
+      document.getElementById('exec-decision').textContent = '—';
+      document.getElementById('exec-confidence').textContent = '—';
+      document.getElementById('exec-primary-reason').textContent = '—';
+      document.getElementById('exec-recommendation').textContent = '—';
+      document.getElementById('exec-updated-at').textContent = '—';
+      ['dash-approve-btn','dash-review-btn','dash-reject-btn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.disabled = true;
+        btn.className = 'w-full bg-white/5 border border-white/10 text-on-surface/30 py-3 rounded font-bold cursor-not-allowed flex items-center justify-center gap-2';
+      });
+      return;
+    }
+
+    const hasData = d.fraud_probability != null || d.risk_score != null;
+    if (!hasData) {
+      document.getElementById('exec-fraud-prob').textContent = 'No investigations completed.';
+      document.getElementById('exec-compliance').textContent = '';
+      document.getElementById('exec-regulatory').textContent = '';
+      document.getElementById('exec-decision').textContent = '';
+      document.getElementById('exec-confidence').textContent = '';
+      document.getElementById('exec-primary-reason').textContent = '';
+      document.getElementById('exec-recommendation').textContent = '';
+      document.getElementById('exec-updated-at').textContent = '';
+      ['dash-approve-btn','dash-review-btn','dash-reject-btn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.disabled = true;
+        btn.className = 'w-full bg-white/5 border border-white/10 text-on-surface/30 py-3 rounded font-bold cursor-not-allowed flex items-center justify-center gap-2';
+      });
+      return;
+    }
+
+    document.getElementById('exec-fraud-prob').textContent = d.fraud_probability != null ? d.fraud_probability + '%' : '—';
+    document.getElementById('exec-compliance').textContent = d.compliance || '—';
+    document.getElementById('exec-regulatory').textContent = d.regulatory_risk || '—';
+
+    const decisionEl = document.getElementById('exec-decision');
+    const dec = (d.decision || '').toUpperCase();
+    decisionEl.textContent = dec || '—';
+    if (dec === 'REJECT') { decisionEl.style.color = '#ffb4ab'; }
+    else if (dec === 'REVIEW') { decisionEl.style.color = '#f6e05e'; }
+    else { decisionEl.style.color = '#4edea3'; }
+
+    document.getElementById('exec-confidence').textContent = d.confidence != null ? d.confidence + '%' : '—';
+    document.getElementById('exec-primary-reason').textContent = d.primary_reason || '—';
+    document.getElementById('exec-recommendation').textContent = d.recommendation || '—';
+    document.getElementById('exec-updated-at').textContent = d.updated_at ? new Date(d.updated_at).toLocaleString() : '—';
+
+    // Highlight correct decision button based on backend value
+    const btnMap = { 'APPROVE': 'dash-approve-btn', 'REVIEW': 'dash-review-btn', 'REJECT': 'dash-reject-btn' };
+    const activeId = btnMap[dec];
+    const classDefaults = {
+      'dash-approve-btn': 'w-full bg-white/5 border border-white/10 text-on-surface py-3 rounded font-bold hover:bg-white/10 transition-all flex items-center justify-center gap-2 cursor-pointer',
+      'dash-review-btn': 'bg-white/5 border border-white/10 text-on-surface py-3 rounded font-bold hover:bg-white/10 transition-all flex items-center justify-center gap-2 cursor-pointer',
+      'dash-reject-btn': 'bg-error/10 border border-error/30 text-error py-3 rounded font-bold hover:bg-error/20 transition-all flex items-center justify-center gap-2 cursor-pointer',
+    };
+    const classActive = {
+      'dash-approve-btn': 'w-full bg-primary text-on-primary py-3 rounded font-bold hover:brightness-110 transition-all flex items-center justify-center gap-2 cursor-pointer',
+      'dash-review-btn': 'bg-yellow-500/20 border border-yellow-500/40 text-yellow-500 py-3 rounded font-bold hover:brightness-110 transition-all flex items-center justify-center gap-2 cursor-pointer',
+      'dash-reject-btn': 'bg-error text-on-error py-3 rounded font-bold hover:brightness-110 transition-all flex items-center justify-center gap-2 cursor-pointer',
+    };
+    ['dash-approve-btn','dash-review-btn','dash-reject-btn'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.className = (id === activeId ? classActive[id] : classDefaults[id]);
+      btn.disabled = false;
+    });
+  }
+
   // ── DASHBOARD ──
   async function loadDashboard() {
     if (document.getElementById('dash-loaded').dataset.loaded === '1') return;
 
-    const [exec, threats] = await Promise.all([
+    const [exec, threats, stats] = await Promise.all([
       api('GET', '/dashboard/executive').catch(() => null),
       api('GET', '/dashboard/live-threats?limit=10').catch(() => null),
+      api('GET', '/dashboard/statistics').catch(() => null),
     ]);
 
-    const total = exec ? exec.high_risk + exec.medium_risk + exec.low_risk : 0;
-
-    animateKPI('kpi-scanned', exec?.total_documents_scanned || 0);
-    animateKPI('kpi-fraud', exec?.fraud_detected || 0);
-    animateKPI('kpi-highrisk', exec?.high_risk || 0);
-    animateKPI('kpi-compliance', exec?.compliance_alerts || 0);
-    animateKPI('kpi-avgscore', total ? Math.round((exec.high_risk * 90 + exec.medium_risk * 50) / total) : 0);
-
-    const riskScore = total ? Math.round((exec.high_risk * 90 + exec.medium_risk * 50) / total) : 0;
-    renderRiskGauge(riskScore);
+    if (stats) {
+      animateKPI('kpi-scanned', stats.documents_scanned || 0);
+      animateKPI('kpi-fraud', stats.fraud_detected || 0);
+      animateKPI('kpi-highrisk', stats.high_risk || 0);
+      animateKPI('kpi-compliance', stats.compliance_alerts || 0);
+      animateKPI('kpi-avgscore', stats.average_risk != null ? Math.round(stats.average_risk) : 0);
+      renderRiskGauge(stats.average_risk != null ? Math.round(stats.average_risk) : 0);
+    } else {
+      const total = exec ? exec.high_risk + exec.medium_risk + exec.low_risk : 0;
+      animateKPI('kpi-scanned', exec?.total_documents_scanned || 0);
+      animateKPI('kpi-fraud', exec?.fraud_detected || 0);
+      animateKPI('kpi-highrisk', exec?.high_risk || 0);
+      animateKPI('kpi-compliance', exec?.compliance_alerts || 0);
+      animateKPI('kpi-avgscore', total ? Math.round((exec.high_risk * 90 + exec.medium_risk * 50) / total) : 0);
+      renderRiskGauge(total ? Math.round((exec.high_risk * 90 + exec.medium_risk * 50) / total) : 0);
+    }
 
     // Risk distribution chart
     if (exec?.risk_distribution) {
@@ -251,12 +517,25 @@ function renderAnalysis(result) {
           { label: 'Scans', data: exec.trend_analysis.slice(-14).map(t => t.scans || 0), color: '#06b6d4' },
         ],
       });
+    } else {
+      const chartEl = document.getElementById('trend-chart');
+      if (chartEl) {
+        const ctx = chartEl.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, chartEl.width, chartEl.height);
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+          ctx.font = '14px system-ui';
+          ctx.textAlign = 'center';
+          ctx.fillText('No data available', chartEl.width / 2, chartEl.height / 2);
+        }
+      }
     }
 
     // Recent scans
     const scansBody = document.getElementById('recent-scans-body');
-    if (scansBody && exec?.recent_scans) {
-      scansBody.innerHTML = exec.recent_scans.slice(0, 5).map(s => `
+    if (scansBody) {
+      if (exec?.recent_scans && exec.recent_scans.length) {
+        scansBody.innerHTML = exec.recent_scans.slice(0, 5).map(s => `
         <div class="dash-scan-item flex items-center justify-between p-2 rounded hover:bg-white/5 cursor-pointer ${s.scan_id === currentDashboardScanId ? 'selected bg-primary/10 border border-primary/30' : ''}" data-scan-id="${s.scan_id || ''}" onclick="window.selectDashboardScan('${s.scan_id || ''}')">
           <div class="flex items-center gap-2 min-w-0">
             <span class="material-symbols-outlined text-sm text-on-surface-variant">description</span>
@@ -265,6 +544,9 @@ function renderAnalysis(result) {
           <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${s.risk === 'HIGH' ? 'bg-error/20 text-error' : s.risk === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-500' : 'bg-tertiary/20 text-tertiary'}">${s.risk || 'LOW'}</span>
         </div>
       `).join('');
+      } else {
+        scansBody.innerHTML = '<div class="text-on-surface-variant/50 text-xs text-center py-6">No data available</div>';
+      }
     }
 
     // Live threats
@@ -287,13 +569,12 @@ function renderAnalysis(result) {
       }
     }
 
-    // Executive decision panel
-    if (exec) {
-      const prob = exec.high_risk > 0 ? Math.min(exec.high_risk / Math.max(exec.total_documents_scanned, 1) * 100, 100).toFixed(1) + '%' : '—';
-      document.getElementById('exec-fraud-prob').textContent = prob;
-      document.getElementById('exec-compliance').textContent = exec.compliance_alerts > 5 ? 'Severe' : exec.compliance_alerts > 0 ? 'Moderate' : '—';
-      document.getElementById('exec-regulatory').textContent = exec.high_risk > 5 ? 'Critical' : exec.high_risk > 0 ? 'Elevated' : '—';
-    }
+    // Executive decision panel — use dedicated endpoint (fallback to REST on initial load)
+    api('GET', '/dashboard/executive-decision').then(dec => {
+      updateExecutiveDecision(dec);
+    }).catch(() => {
+      updateExecutiveDecision(null);
+    });
 
     // Set the current dashboard scan ID from the most recent scan
     if (exec?.recent_scans?.length) {
@@ -302,6 +583,16 @@ function renderAnalysis(result) {
       document.querySelectorAll('#recent-scans-body .dash-scan-item').forEach(el => {
         el.classList.toggle('selected', el.dataset.scanId === currentDashboardScanId);
       });
+      // Update Analysis Pipeline with latest scan data
+      updatePipelineStatus(exec.recent_scans[0]);
+      // Fetch latest scan pipeline timeline
+      if (currentDashboardScanId) {
+        api('GET', `/investigations/${currentDashboardScanId}`).then(detail => {
+          if (detail && detail.timeline && detail.timeline.length) {
+            updatePipelineWithTimeline(detail.timeline);
+          }
+        }).catch(() => {});
+      }
     } else {
       currentDashboardScanId = null;
     }
@@ -315,7 +606,8 @@ function renderAnalysis(result) {
     if (!el) return;
     const duration = 1000;
     const start = performance.now();
-    const startVal = 0;
+    const startVal = parseInt((el.textContent || '0').replace(/,/g, '')) || 0;
+    if (startVal === target) return;
     function tick(now) {
       const p = Math.min((now - start) / duration, 1);
       const eased = 1 - Math.pow(1 - p, 3);
@@ -539,10 +831,11 @@ function renderAnalysis(result) {
         document.getElementById('scan-decision-card-value').textContent = decision;
         document.getElementById('scan-decision-card-value').style.color = decColor;
         document.getElementById('scan-decision-card-confidence').textContent = `Confidence: ${fc}%`;
-        const reasonText = decision === 'REJECT' ? 'Multiple authenticity failures detected — document cannot be trusted.'
+        const reasonOverride = result.override_reason || result.decision_reason || '';
+        const reasonText = reasonOverride || (decision === 'REJECT' ? 'Multiple authenticity failures detected — document cannot be trusted.'
           : decision === 'ESCALATE' ? 'Medium-to-high risk indicators require manual expert review before further processing.'
           : decision === 'REVIEW' ? 'Some minor anomalies found — review recommended before proceeding.'
-          : 'No decision reason available.';
+          : 'No decision reason available.');
         document.getElementById('scan-decision-card-reason').textContent = reasonText;
       } else {
         decisionCard.style.display = 'none';
@@ -1086,6 +1379,106 @@ function renderAnalysis(result) {
           </div>` : ''}
         </div>
 
+        <!-- Analyst Decision Panel -->
+        <div class="glass-panel rounded-xl p-6 mb-4 border-l-4 ${data.human_decision ? (data.human_decision === 'APPROVED' ? 'border-tertiary' : data.human_decision === 'MANUAL_REVIEW' ? 'border-yellow-500' : 'border-error') : 'border-primary/30'}">
+          <div class="flex items-center gap-2 mb-4">
+            <span class="material-symbols-outlined text-primary">gavel</span>
+            <span class="text-sm font-bold text-white">Analyst Decision</span>
+            ${data.review_status === 'Completed' ? '<span class="px-2 py-0.5 bg-tertiary/20 text-tertiary rounded text-[10px] font-semibold">Completed</span>' : '<span class="px-2 py-0.5 bg-yellow-500/20 text-yellow-500 rounded text-[10px] font-semibold">Pending</span>'}
+          </div>
+
+          ${data.review_status === 'Completed' ? `
+          <!-- Decision Summary (read-only after save) -->
+          <div class="rounded-xl p-4 ${data.human_decision === 'APPROVED' ? 'bg-tertiary/10 border border-tertiary/20' : data.human_decision === 'MANUAL_REVIEW' ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-error/10 border border-error/20'}">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <span class="material-symbols-outlined text-2xl ${data.human_decision === 'APPROVED' ? 'text-tertiary' : data.human_decision === 'MANUAL_REVIEW' ? 'text-yellow-500' : 'text-error'}">${data.human_decision === 'APPROVED' ? 'check_circle' : data.human_decision === 'MANUAL_REVIEW' ? 'rate_review' : 'block'}</span>
+                <div>
+                  <div class="text-sm font-bold text-white">${data.human_decision}</div>
+                  <div class="text-xs text-on-surface-variant">by ${data.reviewed_by || 'Unknown'} · ${data.review_completed_at ? timeSince(new Date(data.review_completed_at)) : ''}</div>
+                </div>
+              </div>
+            </div>
+            ${data.reviewer_notes ? `<div class="mt-3 p-3 bg-surface-container rounded-lg text-xs text-on-surface-variant">${data.reviewer_notes}</div>` : ''}
+            ${data.assigned_team ? `<div class="mt-2 text-xs text-on-surface-variant">Assigned Team: <span class="text-white">${data.assigned_team}</span></div>` : ''}
+            <div class="flex gap-2 mt-3 flex-wrap">
+              ${data.notify_compliance ? '<span class="px-2 py-0.5 bg-primary/10 text-primary rounded text-[10px]">Notify Compliance</span>' : ''}
+              ${data.require_branch_verification ? '<span class="px-2 py-0.5 bg-primary/10 text-primary rounded text-[10px]">Branch Verification</span>' : ''}
+              ${data.escalate_manager ? '<span class="px-2 py-0.5 bg-error/10 text-error rounded text-[10px]">Escalate Manager</span>' : ''}
+              ${data.freeze_processing ? '<span class="px-2 py-0.5 bg-warning/10 text-warning rounded text-[10px]">Freeze Processing</span>' : ''}
+            </div>
+          </div>` : `
+          <!-- Decision Form (active) -->
+          <div class="space-y-4">
+            <!-- Decision Radio -->
+            <div>
+              <div class="text-xs font-semibold text-on-surface-variant uppercase tracking-widest mb-2">Your Decision</div>
+              <div class="flex gap-3">
+                <label class="flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-all ${data.human_decision === 'APPROVED' ? 'bg-tertiary/20 border-tertiary/40 text-tertiary' : 'bg-surface-container border-white/10 text-on-surface-variant hover:border-white/30'}">
+                  <input type="radio" name="analyst-decision" value="APPROVED" class="hidden" ${data.human_decision === 'APPROVED' ? 'checked' : ''} onchange="document.querySelectorAll('.analyst-decision-option').forEach(e => e.classList.remove('selected-approve','selected-review','selected-reject')); this.closest('label').classList.add('selected-approve')">
+                  <span class="material-symbols-outlined text-lg">check_circle</span>
+                  <span class="text-xs font-semibold">Approve</span>
+                </label>
+                <label class="flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-all ${data.human_decision === 'MANUAL_REVIEW' ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-500' : 'bg-surface-container border-white/10 text-on-surface-variant hover:border-white/30'}">
+                  <input type="radio" name="analyst-decision" value="MANUAL_REVIEW" class="hidden" ${data.human_decision === 'MANUAL_REVIEW' ? 'checked' : ''} onchange="document.querySelectorAll('.analyst-decision-option').forEach(e => e.classList.remove('selected-approve','selected-review','selected-reject')); this.closest('label').classList.add('selected-review')">
+                  <span class="material-symbols-outlined text-lg">rate_review</span>
+                  <span class="text-xs font-semibold">Manual Review</span>
+                </label>
+                <label class="flex items-center gap-2 px-4 py-2.5 rounded-lg border cursor-pointer transition-all ${data.human_decision === 'REJECTED' ? 'bg-error/20 border-error/40 text-error' : 'bg-surface-container border-white/10 text-on-surface-variant hover:border-white/30'}">
+                  <input type="radio" name="analyst-decision" value="REJECTED" class="hidden" ${data.human_decision === 'REJECTED' ? 'checked' : ''} onchange="document.querySelectorAll('.analyst-decision-option').forEach(e => e.classList.remove('selected-approve','selected-review','selected-reject')); this.closest('label').classList.add('selected-reject')">
+                  <span class="material-symbols-outlined text-lg">block</span>
+                  <span class="text-xs font-semibold">Reject</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Reviewer Notes -->
+            <div>
+              <div class="text-xs font-semibold text-on-surface-variant uppercase tracking-widest mb-2">Reviewer Notes</div>
+              <textarea id="analyst-notes-input" class="w-full px-3 py-2 bg-surface-container border border-white/10 rounded-lg text-xs text-on-surface outline-none resize-none" rows="3" placeholder="Add your review notes...">${data.reviewer_notes || ''}</textarea>
+            </div>
+
+            <!-- Assigned Team -->
+            <div>
+              <div class="text-xs font-semibold text-on-surface-variant uppercase tracking-widest mb-2">Assign To Team</div>
+              <select id="analyst-team-select" class="w-full px-3 py-2 bg-surface-container border border-white/10 rounded-lg text-xs text-on-surface outline-none">
+                <option value="">— Select Team —</option>
+                <option value="Fraud Operations" ${data.assigned_team === 'Fraud Operations' ? 'selected' : ''}>Fraud Operations</option>
+                <option value="Compliance" ${data.assigned_team === 'Compliance' ? 'selected' : ''}>Compliance</option>
+                <option value="Risk Management" ${data.assigned_team === 'Risk Management' ? 'selected' : ''}>Risk Management</option>
+                <option value="Legal" ${data.assigned_team === 'Legal' ? 'selected' : ''}>Legal</option>
+                <option value="Engineering" ${data.assigned_team === 'Engineering' ? 'selected' : ''}>Engineering</option>
+              </select>
+            </div>
+
+            <!-- Checkboxes -->
+            <div class="grid grid-cols-2 gap-3">
+              <label class="flex items-center gap-2 px-3 py-2 bg-surface-container rounded-lg cursor-pointer hover:bg-white/5 transition-all">
+                <input type="checkbox" id="analyst-notify-compliance" class="w-4 h-4 accent-primary" ${data.notify_compliance ? 'checked' : ''}>
+                <span class="text-xs text-on-surface-variant">Notify Compliance</span>
+              </label>
+              <label class="flex items-center gap-2 px-3 py-2 bg-surface-container rounded-lg cursor-pointer hover:bg-white/5 transition-all">
+                <input type="checkbox" id="analyst-branch-verify" class="w-4 h-4 accent-primary" ${data.require_branch_verification ? 'checked' : ''}>
+                <span class="text-xs text-on-surface-variant">Branch Verification</span>
+              </label>
+              <label class="flex items-center gap-2 px-3 py-2 bg-surface-container rounded-lg cursor-pointer hover:bg-white/5 transition-all">
+                <input type="checkbox" id="analyst-escalate" class="w-4 h-4 accent-error" ${data.escalate_manager ? 'checked' : ''}>
+                <span class="text-xs text-on-surface-variant">Escalate to Manager</span>
+              </label>
+              <label class="flex items-center gap-2 px-3 py-2 bg-surface-container rounded-lg cursor-pointer hover:bg-white/5 transition-all">
+                <input type="checkbox" id="analyst-freeze" class="w-4 h-4 accent-warning" ${data.freeze_processing ? 'checked' : ''}>
+                <span class="text-xs text-on-surface-variant">Freeze Processing</span>
+              </label>
+            </div>
+
+            <!-- Save Button -->
+            <button class="w-full px-4 py-2.5 bg-primary text-on-primary rounded-lg text-xs font-bold hover:brightness-110 transition-all cursor-pointer" onclick="window.saveInvestigationDecision('${scanId}', event)">
+              <span class="material-symbols-outlined text-sm align-middle mr-1">save</span>
+              Save Decision
+            </button>
+          </div>`}
+        </div>
+
         <!-- Tabs -->
         <div class="flex gap-1 mb-4 border-b border-white/10">
           <button class="tab-btn px-4 py-2 text-xs font-semibold text-on-surface-variant hover:text-white border-b-2 border-transparent active-tab cursor-pointer" data-tab="findings" onclick="switchInvestigationTab('findings')">Findings (${data.findings?.length || 0})</button>
@@ -1417,6 +1810,48 @@ function renderAnalysis(result) {
     }
   };
 
+  // ── Analyst Decision ──
+  window.saveInvestigationDecision = async function(scanId, evt) {
+    const selected = document.querySelector('input[name="analyst-decision"]:checked');
+    if (!selected) {
+      showToast('Please select a decision (Approve, Manual Review, or Reject)', 'error');
+      return;
+    }
+    const decision = selected.value;
+    const reviewerNotes = document.getElementById('analyst-notes-input')?.value || '';
+    const assignedTeam = document.getElementById('analyst-team-select')?.value || '';
+    const notifyCompliance = document.getElementById('analyst-notify-compliance')?.checked || false;
+    const requireBranchVerification = document.getElementById('analyst-branch-verify')?.checked || false;
+    const escalateManager = document.getElementById('analyst-escalate')?.checked || false;
+    const freezeProcessing = document.getElementById('analyst-freeze')?.checked || false;
+
+    const btn = evt && evt.currentTarget;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-symbols-outlined text-sm align-middle mr-1 animate-spin">refresh</span> Saving...';
+    try {
+      const result = await api('PUT', `/investigations/${scanId}/decision`, {
+        decision,
+        reviewer_notes: reviewerNotes,
+        assigned_team: assignedTeam,
+        notify_compliance: notifyCompliance,
+        require_branch_verification: requireBranchVerification,
+        escalate_manager: escalateManager,
+        freeze_processing: freezeProcessing,
+      });
+      showToast(result.message || 'Decision saved successfully', 'success');
+      // Refresh the investigation detail to show the completed state
+      renderInvestigationDetail(scanId);
+      // Force investigations list and dashboard to refresh
+      document.getElementById('inv-loaded').dataset.loaded = '0';
+      const dashLoaded = document.getElementById('dash-loaded');
+      if (dashLoaded) dashLoaded.dataset.loaded = '0';
+    } catch (e) {
+      showToast('Failed to save decision: ' + e.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<span class="material-symbols-outlined text-sm align-middle mr-1">save</span> Save Decision';
+    }
+  };
+
   function timeSince(date) {
     const sec = Math.floor((new Date() - date) / 1000);
     if (sec < 60) return 'just now';
@@ -1428,66 +1863,200 @@ function renderAnalysis(result) {
     return `${days}d ago`;
   }
 
-  // ── COMPLIANCE ──
+  // ── COMPLIANCE OPERATIONS DASHBOARD ──
+  let _complianceData = null;
+  let _complianceFilter = { framework: '', severity: '', status: '', search: '' };
+
   async function loadCompliance() {
-    if (document.getElementById('comp-loaded').dataset.loaded === '1') return;
-
     try {
-      // Get count from executive dashboard (now uses real compliance_alerts table)
-      const exec = await api('GET', '/dashboard/executive').catch(() => null);
-      const count = exec?.compliance_alerts || 0;
-      document.getElementById('comp-total').textContent = count;
+      const data = await api('GET', '/compliance/dashboard?days=30');
+      _complianceData = data;
 
-      // Get detailed alerts from the compliance/alerts endpoint
-      const alertsResp = await api('GET', '/compliance/alerts?limit=20&days=30').catch(() => null);
-      const alerts = alertsResp?.alerts || [];
+      // Update operations summary
+      setText('comp-open', data.open_findings);
+      setText('comp-under-review', data.under_review);
+      setText('comp-resolved-today', data.resolved_today);
+      setText('comp-avg-resolution', data.avg_resolution_hours != null ? data.avg_resolution_hours + 'h' : '—');
+      setText('comp-priority-framework', data.highest_priority_framework || '—');
+      setText('comp-pending-reviews', data.pending_reviews);
 
-      // Update severity counts
-      const criticalCount = alerts.filter(a => a.compliance_severity === 'CRITICAL').length;
-      const highCount = alerts.filter(a => a.compliance_severity === 'HIGH').length;
-      const compCritical = document.getElementById('comp-critical');
-      const compHigh = document.getElementById('comp-high');
-      if (compCritical) compCritical.textContent = criticalCount;
-      if (compHigh) compHigh.textContent = highCount;
+      // Update framework counters
+      data.frameworks.forEach(fw => {
+        const keyMap = { 'RBI_KYC': 'rbikyc', 'AML': 'aml', 'DPDP': 'dpdp', 'CERT_IN': 'certin' };
+        const elId = 'comp-fw-' + (keyMap[fw.key] || fw.key.toLowerCase());
+        setText(elId, fw.count);
+      });
 
-      const list = document.getElementById('compliance-findings-list');
-      if (list) {
-        if (alerts.length) {
-          const severityColor = {
-            'CRITICAL': 'border-red-500',
-            'HIGH': 'border-orange-500',
-            'MEDIUM': 'border-yellow-500',
-            'LOW': 'border-blue-500',
-          };
-          list.innerHTML = alerts.map(a => {
-            // Extract evidence snippet from finding_description if it contains one
-            let evidence = a.evidence || a.extracted_text || '';
-            if (!evidence && a.finding_description) {
-              const match = a.finding_description.match(/"(.*?)"/);
-              evidence = match ? match[1] : '';
-            }
-            return `
-            <div class="finding-card glass-panel p-4 rounded-xl border-l-4 ${severityColor[a.compliance_severity] || 'border-error'} flex items-start gap-3">
-              <div class="flex-1">
-                <div class="text-sm font-semibold text-white">${a.regulation}</div>
-                <div class="text-xs text-on-surface-variant mt-0.5">${a.finding_description || a.finding_type || ''}</div>
-                ${evidence ? `<div class="mt-2 p-2 bg-surface-container rounded text-xs font-mono text-on-surface-variant">🔍 ${evidence}</div>` : ''}
-                <div class="flex gap-2 mt-2">
-                  <span class="px-2 py-0.5 text-[10px] font-semibold rounded ${a.compliance_severity === 'CRITICAL' || a.compliance_severity === 'HIGH' ? 'bg-error/20 text-error' : 'bg-warning/20 text-warning'}">${a.compliance_severity}</span>
-                  <span class="px-2 py-0.5 text-[10px] font-semibold rounded bg-white/5 text-on-surface-variant">${a.reference}</span>
-                </div>
-                ${a.risk_impact ? `<div class="mt-1 p-2 bg-error/5 rounded text-xs text-on-surface-variant">⚠ ${a.risk_impact}</div>` : ''}
-                ${a.required_action ? `<div class="text-xs text-on-surface-variant mt-1">Action: ${a.required_action}</div>` : ''}
-                ${a.timeline ? `<div class="text-xs text-primary mt-1">Timeline: ${a.timeline}</div>` : ''}
-              </div>
-            </div>`;
-          }).join('');
-        } else {
-          list.innerHTML = '<div class="text-center py-8 text-on-surface-variant"><span class="material-symbols-outlined text-4xl block mb-2">verified</span>No compliance findings</div>';
-        }
+      // Render findings with current filters
+      applyComplianceFilters();
+
+      // Render charts
+      renderComplianceCharts(data);
+
+      // Update timestamp
+      const updatedEl = document.getElementById('comp-updated-at');
+      if (updatedEl && data.updated_at) {
+        updatedEl.textContent = 'Last updated: ' + timeSince(new Date(data.updated_at)) + ' (' + new Date(data.updated_at).toLocaleTimeString() + ')';
       }
-    } catch (_) {}
-    document.getElementById('comp-loaded').dataset.loaded = '1';
+
+      document.getElementById('comp-loaded').dataset.loaded = '1';
+    } catch (_) {
+      // Silently handle — empty state shown
+    }
+  }
+
+  function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val ?? '—';
+  }
+
+  function applyComplianceFilters() {
+    _complianceFilter.severity = document.getElementById('comp-filter-severity')?.value || '';
+    _complianceFilter.status = document.getElementById('comp-filter-status')?.value || '';
+    _complianceFilter.search = (document.getElementById('comp-filter-search')?.value || '').toLowerCase();
+
+    const findings = _complianceData?.recent_findings || [];
+    const filtered = findings.filter(f => {
+      if (_complianceFilter.framework && f.regulation !== _complianceFilter.framework) return false;
+      if (_complianceFilter.severity && f.compliance_severity !== _complianceFilter.severity) return false;
+      if (_complianceFilter.status && f.status !== _complianceFilter.status) return false;
+      if (_complianceFilter.search) {
+        const q = _complianceFilter.search;
+        const match = (f.finding_description || '').toLowerCase().includes(q)
+          || (f.document_name || '').toLowerCase().includes(q)
+          || (f.regulation || '').toLowerCase().includes(q)
+          || (f.finding_type || '').toLowerCase().includes(q)
+          || (f.reference || '').toLowerCase().includes(q);
+        if (!match) return false;
+      }
+      return true;
+    });
+
+    const countEl = document.getElementById('comp-filter-count');
+    if (countEl) countEl.textContent = filtered.length + ' of ' + findings.length + ' findings';
+
+    const list = document.getElementById('compliance-findings-list');
+    if (!list) return;
+
+    if (!filtered.length) {
+      list.innerHTML = '<div class="text-center py-8 text-on-surface-variant"><span class="material-symbols-outlined text-4xl block mb-2">verified</span>No matching findings</div>';
+      return;
+    }
+
+    const sevColor = {
+      'CRITICAL': 'border-red-500',
+      'HIGH': 'border-orange-500',
+      'MEDIUM': 'border-yellow-500',
+      'LOW': 'border-blue-500',
+    };
+    const sevBg = {
+      'CRITICAL': 'bg-error/20 text-error',
+      'HIGH': 'bg-orange-500/20 text-orange-500',
+      'MEDIUM': 'bg-yellow-500/20 text-yellow-500',
+      'LOW': 'bg-blue-500/20 text-blue-500',
+    };
+    const statusColor = {
+      'OPEN': 'bg-primary/10 text-primary border-primary/30',
+      'UNDER_REVIEW': 'bg-yellow-500/10 text-yellow-500 border-yellow-500/30',
+      'RESOLVED': 'bg-tertiary/10 text-tertiary border-tertiary/30',
+      'FALSE_POSITIVE': 'bg-white/10 text-on-surface-variant border-white/20',
+      'CLOSED': 'bg-white/5 text-on-surface-variant border-white/10',
+    };
+
+    list.innerHTML = filtered.map(f => `
+      <div class="finding-card glass-panel p-3 rounded-xl border-l-4 ${sevColor[f.compliance_severity] || 'border-gray-500'} flex items-start gap-3 hover:border-primary/30 transition-all">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-1 flex-wrap">
+            <span class="text-xs font-semibold text-white">${escHtml(f.regulation)}</span>
+            <span class="text-[9px] px-1.5 py-0.5 rounded border ${statusColor[f.status] || 'bg-white/5 text-on-surface-variant'}">${f.status}</span>
+          </div>
+          <div class="text-[11px] text-on-surface-variant leading-relaxed">${escHtml((f.finding_description || f.finding_type || '').slice(0, 200))}</div>
+          <div class="flex gap-2 mt-1.5 flex-wrap items-center">
+            <span class="text-[9px] px-1.5 py-0.5 rounded font-semibold ${sevBg[f.compliance_severity] || 'bg-white/5 text-on-surface-variant'}">${f.compliance_severity}</span>
+            <span class="text-[9px] text-on-surface-variant/60">${escHtml(f.reference || '')}</span>
+            ${f.document_name ? `<span class="text-[9px] text-primary">${escHtml(f.document_name)}</span>` : ''}
+            ${f.assigned_to ? `<span class="text-[9px] text-on-surface-variant">👤 ${escHtml(f.assigned_to)}</span>` : ''}
+            ${f.analyst_decision ? `<span class="text-[9px] px-1.5 py-0.5 rounded bg-white/5 ${f.analyst_decision === 'APPROVED' ? 'text-tertiary' : f.analyst_decision === 'REJECTED' ? 'text-error' : 'text-yellow-500'}">${f.analyst_decision}</span>` : ''}
+          </div>
+          <div class="flex gap-3 mt-1 text-[9px] text-on-surface-variant/40">
+            ${f.created_at ? `<span>🕐 ${timeSince(new Date(f.created_at))}</span>` : ''}
+            ${f.updated_at ? `<span>Updated ${timeSince(new Date(f.updated_at))}</span>` : ''}
+            ${f.resolved_at ? `<span class="text-tertiary">Resolved ${timeSince(new Date(f.resolved_at))}</span>` : ''}
+            <span class="text-on-surface-variant/30">#${f.id}</span>
+          </div>
+          ${(f.risk_impact || f.required_action) ? `
+          <div class="mt-1.5 flex gap-2">
+            ${f.risk_impact ? `<span class="text-[9px] text-on-surface-variant/60">⚠ ${escHtml(f.risk_impact)}</span>` : ''}
+            ${f.required_action ? `<span class="text-[9px] text-primary">Action: ${escHtml(f.required_action)}</span>` : ''}
+          </div>` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  window.filterCompliance = function(type, value) {
+    if (type === 'framework') {
+      _complianceFilter.framework = value;
+      // Update chip active state
+      document.querySelectorAll('.comp-fw-chip').forEach(c => {
+        c.classList.toggle('active-fw-chip', c.dataset.framework === value);
+      });
+    }
+    applyComplianceFilters();
+  };
+
+  function renderComplianceCharts(data) {
+    if (!data || !window.Chart) return;
+
+    const analytics = data.analytics;
+    if (!analytics) return;
+
+    // Open vs Closed (doughnut)
+    if (analytics.open_vs_closed) {
+      renderDoughnutChart('comp-chart-open-closed', {
+        labels: analytics.open_vs_closed.labels,
+        values: analytics.open_vs_closed.values,
+        colors: ['#06b6d4', '#f59e0b', '#4edea3', '#94a3b8', '#64748b'],
+      });
+    }
+
+    // By Framework (bar)
+    if (analytics.findings_by_framework && analytics.findings_by_framework.length) {
+      renderBarChart('comp-chart-framework', {
+        labels: analytics.findings_by_framework.map(f => f.label),
+        datasets: [{
+          label: 'Findings',
+          data: analytics.findings_by_framework.map(f => f.count),
+          color: '#06b6d4',
+        }],
+      });
+    }
+
+    // By Severity (bar)
+    if (analytics.findings_by_severity && analytics.findings_by_severity.length) {
+      const sevColors = { 'CRITICAL': '#ef4444', 'HIGH': '#f97316', 'MEDIUM': '#eab308', 'LOW': '#3b82f6' };
+      renderBarChart('comp-chart-severity', {
+        labels: analytics.findings_by_severity.map(f => f.label),
+        datasets: [{
+          label: 'Count',
+          data: analytics.findings_by_severity.map(f => f.count),
+          color: '#06b6d4',
+        }],
+      });
+    }
+
+    // Daily trend (line)
+    if (analytics.daily_trend && analytics.daily_trend.length) {
+      const trend = analytics.daily_trend;
+      renderLineChart('comp-chart-trend', {
+        labels: trend.map(t => t.date ? t.date.slice(5) : ''),
+        datasets: [
+          { label: 'Total', data: trend.map(t => t.total || 0), color: '#06b6d4', fill: true },
+          { label: 'High/Critical', data: trend.map(t => t.high || 0), color: '#ef4444' },
+          { label: 'Resolved', data: trend.map(t => t.resolved || 0), color: '#4edea3' },
+        ],
+      });
+    }
   }
 
   // ── ANALYTICS ──
@@ -1802,23 +2371,68 @@ function renderAnalysis(result) {
     const steps = document.getElementById('scan-timeline-steps');
     if (!card || !steps) return;
     card.style.display = 'block';
-    const timeline = result.audit_trail || result.timeline || result.steps || [];
-    const items = timeline.length ? timeline : [
-      { step: 'Document Received', status: 'completed', timestamp: result.timestamp || new Date().toISOString() },
-      { step: 'OCR Processing', status: 'completed' },
-      { step: 'Bank Validation', status: 'completed' },
-      { step: 'Template Detection', status: 'completed' },
-      { step: 'Risk Aggregation', status: 'completed' },
-      { step: 'Compliance Check', status: result.findings?.some(f => f.category === 'compliance') ? 'completed' : 'completed' },
-      { step: 'Final Decision', status: 'completed' },
-    ];
-    const icons = ['upload_file', 'text_snippet', 'account_balance', 'description', 'monitoring', 'policy', 'check_circle'];
+
+    const STAGE_MAP = {
+      'Upload':        { id: 'upload',     title: 'Document Upload',              description: 'File received and validated',       icon: 'upload_file' },
+      'Metadata':      { id: 'metadata',   title: 'Metadata Analysis',            description: 'Document metadata inspected',        icon: 'info' },
+      'OCR':           { id: 'ocr',        title: 'OCR Analysis',                 description: 'Extracted document text',            icon: 'text_snippet' },
+      'Authenticity':  { id: 'authenticity', title: 'Bank Authenticity Check',    description: 'Bank document validation',           icon: 'account_balance' },
+      'Financial':     { id: 'financial',  title: 'Financial Integrity',          description: 'Transaction arithmetic verified',    icon: 'payments' },
+      'AML':           { id: 'aml',        title: 'AML Screening',                description: 'Anti-money laundering checks',       icon: 'policy' },
+      'Compliance':    { id: 'compliance', title: 'Compliance Mapping',           description: 'Regulatory compliance review',       icon: 'gavel' },
+      'Risk':          { id: 'risk',       title: 'Risk Aggregation',             description: 'Multi-pipeline risk score computed',  icon: 'monitoring' },
+      'Decision':      { id: 'decision',   title: 'Final Decision',               description: 'Investigation verdict reached',       icon: 'check_circle' },
+    };
+
+    let items;
+    if (result.timeline && result.timeline.length) {
+      items = result.timeline.map(t => {
+        const stage = STAGE_MAP[t.name] || { id: t.name.toLowerCase(), title: t.name, description: 'Pipeline stage completed', icon: 'circle' };
+        return {
+          step: stage.title,
+          title: stage.title,
+          description: stage.description,
+          status: t.status === 'SUCCESS' ? 'completed' : t.status === 'FAILED' ? 'failed' : 'pending',
+          duration_ms: t.duration_ms,
+          icon: stage.icon,
+          id: stage.id,
+          timestamp: result.timestamp,
+        };
+      });
+    } else if (result.audit_trail && result.audit_trail.length) {
+      items = result.audit_trail.map(a => ({
+        step: a.step,
+        title: a.step,
+        description: '',
+        status: a.status === 'completed' ? 'completed' : 'pending',
+        duration_ms: 0,
+        icon: 'circle',
+        id: a.step.toLowerCase().replace(/\s+/g, '_'),
+        timestamp: a.timestamp || result.timestamp,
+      }));
+    } else if (result.steps && result.steps.length) {
+      items = result.steps;
+    } else {
+      items = [
+        { step: 'Document Received', status: 'completed', timestamp: result.timestamp || new Date().toISOString(), title: 'Document Received', description: 'File received', icon: 'upload_file', duration_ms: 0, id: 'document_received' },
+        { step: 'OCR Processing', status: 'completed', title: 'OCR Processing', description: 'Text extracted', icon: 'text_snippet', duration_ms: 0, id: 'ocr_processing' },
+        { step: 'Bank Validation', status: 'completed', title: 'Bank Validation', description: 'Bank details verified', icon: 'account_balance', duration_ms: 0, id: 'bank_validation' },
+        { step: 'Template Detection', status: 'completed', title: 'Template Detection', description: 'Template patterns checked', icon: 'description', duration_ms: 0, id: 'template_detection' },
+        { step: 'Risk Aggregation', status: 'completed', title: 'Risk Aggregation', description: 'Risk score computed', icon: 'monitoring', duration_ms: 0, id: 'risk_aggregation' },
+        { step: 'Compliance Check', status: result.findings?.some(f => f.category === 'compliance') ? 'completed' : 'completed', title: 'Compliance Check', description: 'Regulatory check done', icon: 'policy', duration_ms: 0, id: 'compliance_check' },
+        { step: 'Final Decision', status: 'completed', title: 'Final Decision', description: 'Verdict reached', icon: 'check_circle', duration_ms: 0, id: 'final_decision' },
+      ];
+    }
+
     steps.innerHTML = items.map((item, i) => {
-      const icon = icons[i] || 'circle';
-      return `<div class="flex items-center gap-3 py-2 border-l-2 ${item.status === 'completed' ? 'border-primary/40' : 'border-white/10'} pl-4 relative">
-        <span class="material-symbols-outlined text-sm ${item.status === 'completed' ? 'text-primary' : 'text-on-surface-variant'}">${icon}</span>
-        <span class="text-xs text-white">${item.step}</span>
-        <span class="text-[10px] text-on-surface-variant ml-auto">${item.timestamp ? timeSince(new Date(item.timestamp)) : item.status === 'completed' ? 'Done' : 'Pending'}</span>
+      const icon = item.icon || STAGE_MAP[item.title]?.icon || 'circle';
+      const isCompleted = item.status === 'completed';
+      const isFailed = item.status === 'failed';
+      const label = item.duration_ms ? `${item.duration_ms.toFixed(0)}ms` : (isCompleted ? 'Done' : isFailed ? 'Failed' : 'Pending');
+      return `<div class="flex items-center gap-3 py-2 border-l-2 ${isCompleted ? 'border-primary/40' : isFailed ? 'border-error/40' : 'border-white/10'} pl-4 relative">
+        <span class="material-symbols-outlined text-sm ${isCompleted ? 'text-primary' : isFailed ? 'text-error' : 'text-on-surface-variant'}">${icon}</span>
+        <span class="text-xs text-white" title="${item.description || ''}">${item.title || item.step}</span>
+        <span class="text-[10px] text-on-surface-variant ml-auto">${label}</span>
       </div>`;
     }).join('');
   }
@@ -1848,10 +2462,28 @@ function renderAnalysis(result) {
     const card = document.getElementById('scan-similar-card');
     const list = document.getElementById('scan-similar-list');
     if (!card || !list) return;
+    const cases = result.similar_cases;
+    if (!cases || !cases.length) {
+      card.style.display = 'none';
+      return;
+    }
     card.style.display = 'block';
-    const cats = result.risk_categories || [];
-    const profile = cats.map(c => c.score.toFixed(0)).join('-');
-    list.innerHTML = `<div class="text-xs text-on-surface-variant text-center py-4">Similar cases will appear here as the database grows. Risk profile signature: <span class="font-mono text-primary">${profile}</span></div>`;
+    list.innerHTML = cases.slice(0, 5).map(c => {
+      const pct = c.similarity_pct || 0;
+      const pctCls = pct >= 70 ? 'text-error' : pct >= 40 ? 'text-yellow-500' : 'text-tertiary';
+      const riskCls = c.risk_score >= 70 ? 'bg-error/20 text-error' : c.risk_score >= 40 ? 'bg-yellow-500/20 text-yellow-500' : 'bg-tertiary/20 text-tertiary';
+      return `<div class="flex items-center justify-between p-2 rounded hover:bg-white/5">
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          <span class="material-symbols-outlined text-sm text-on-surface-variant">history</span>
+          <span class="text-xs text-on-surface-variant truncate max-w-[100px]">${c.bank || c.scan_id?.slice(0, 12) || '—'}</span>
+          <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${riskCls}">${c.risk_score != null ? c.risk_score : '—'}</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] text-on-surface-variant">${c.date ? new Date(c.date).toLocaleDateString() : ''}</span>
+          <span class="text-xs font-bold ${pctCls}">${pct.toFixed(0)}%</span>
+        </div>
+      </div>`;
+    }).join('');
   }
 
   // ── Extracted Fields ──

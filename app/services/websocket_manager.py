@@ -30,6 +30,10 @@ class WebSocketEventType(str, Enum):
     THREAT_DETECTED = "threat:detected"
     ALERT_TRIGGERED = "alert:triggered"
     STATS_UPDATE = "stats:update"
+    DASHBOARD_STATISTICS_UPDATED = "dashboard_statistics_updated"
+    EXECUTIVE_DECISION_UPDATED = "executive_decision_updated"
+    INVESTIGATION_DECISION_UPDATED = "investigation_decision_updated"
+    COMPLIANCE_DASHBOARD_UPDATED = "compliance_dashboard_updated"
     CONNECTION_ACK = "connection:ack"
     ERROR = "error"
     HEARTBEAT = "heartbeat"
@@ -359,6 +363,38 @@ class WebSocketManager:
         )
         await self.broadcast(message, "stats")
     
+    async def broadcast_executive_decision_updated(self, decision_data: Dict[str, Any]):
+        """Broadcast executive decision update event."""
+        message = WebSocketMessage(
+            event=WebSocketEventType.EXECUTIVE_DECISION_UPDATED.value,
+            data=decision_data,
+        )
+        await self.broadcast(message, "scans")
+    
+    async def broadcast_investigation_decision_updated(self, decision_data: Dict[str, Any]):
+        """Broadcast investigation decision update event."""
+        message = WebSocketMessage(
+            event=WebSocketEventType.INVESTIGATION_DECISION_UPDATED.value,
+            data=decision_data,
+        )
+        await self.broadcast(message, "scans")
+    
+    async def broadcast_compliance_dashboard_updated(self, payload: Dict[str, Any]):
+        """Broadcast compliance dashboard update event."""
+        message = WebSocketMessage(
+            event=WebSocketEventType.COMPLIANCE_DASHBOARD_UPDATED.value,
+            data=payload,
+        )
+        await self.broadcast(message, "scans")
+    
+    async def broadcast_dashboard_statistics_updated(self, stats_data: Dict[str, Any]):
+        """Broadcast dashboard statistics update event."""
+        message = WebSocketMessage(
+            event=WebSocketEventType.DASHBOARD_STATISTICS_UPDATED.value,
+            data=stats_data,
+        )
+        await self.broadcast(message, "stats")
+    
     async def subscribe(self, client_id: str, channel: str):
         """Subscribe client to a channel."""
         if client_id in self.clients:
@@ -529,6 +565,45 @@ class WebSocketManager:
                     logger.info("WS scan failed event emitted",
                                 scan_id=scan_id,
                                 error=payload.get("error"))
+
+                elif event == "executive_decision_updated":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.EXECUTIVE_DECISION_UPDATED.value,
+                        data=payload,
+                    )
+                    await self.broadcast(ws_msg, "scans")
+                    logger.info("WS executive decision updated event emitted",
+                                fraud_probability=payload.get("fraud_probability"),
+                                decision=payload.get("decision"))
+
+                elif event == "investigation_decision_updated":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.INVESTIGATION_DECISION_UPDATED.value,
+                        data=payload,
+                    )
+                    await self.broadcast(ws_msg, "scans")
+                    logger.info("WS investigation decision updated event emitted",
+                                scan_id=scan_id,
+                                decision=payload.get("decision"))
+
+                elif event == "compliance_dashboard_updated":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.COMPLIANCE_DASHBOARD_UPDATED.value,
+                        data=payload,
+                    )
+                    await self.broadcast(ws_msg, "scans")
+                    logger.info("WS compliance dashboard updated event emitted",
+                                trigger=payload.get("trigger"))
+
+                elif event == "dashboard_statistics_updated":
+                    ws_msg = WebSocketMessage(
+                        event=WebSocketEventType.DASHBOARD_STATISTICS_UPDATED.value,
+                        data=payload,
+                    )
+                    await self.broadcast(ws_msg, "stats")
+                    logger.info("WS dashboard statistics updated event emitted",
+                                documents_scanned=payload.get("documents_scanned"),
+                                fraud_detected=payload.get("fraud_detected"))
 
                 elif event == "threat:detected":
                     ws_msg = WebSocketMessage(

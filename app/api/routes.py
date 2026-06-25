@@ -29,7 +29,7 @@ from app.models.schemas import (
 )
 from app.middleware.auth import get_current_user, require_role
 from app.services.database import get_db_session
-from app.services.redis import get_redis_client
+from app.services.redis import get_redis_client, get_cache, set_cache, delete_cache
 from app.services.scoring import compute_final_score, compute_domain_only_score, compute_fast_url_score
 from app.services.graph import GraphService
 from app.services.threat_graph_engine import get_threat_engine
@@ -72,9 +72,11 @@ from app.models.compliance import ComplianceCheckRequest, ComplianceReport
 from app.services.compliance_engine import analyze as analyze_compliance
 
 # Executive dashboard imports
-from app.models.executive import ExecutiveDashboardResponse
-from app.services.executive_service import get_executive_dashboard
+from app.models.executive import ExecutiveDashboardResponse, ExecutiveDecisionResponse, DashboardStatisticsResponse, AnalystDecisionRequest, AnalystDecisionResponse
+from app.models.compliance_dashboard import ComplianceDashboardResponse
 
+from app.services.executive_service import get_executive_dashboard, get_executive_decision, get_dashboard_statistics, save_analyst_decision
+from app.services.compliance_dashboard_service import get_compliance_dashboard
 # Explainable AI imports
 from app.models.xai import XaiRequest, XaiResponse
 from app.services.xai_engine import generate_explanations
@@ -758,6 +760,32 @@ async def compliance_analyze(
                 findings=len(report.findings), elapsed_ms=elapsed)
 
     return report
+
+
+@router.get("/compliance/dashboard", response_model=ComplianceDashboardResponse)
+async def get_compliance_dashboard_endpoint(
+    days: int = Query(default=30, ge=1, le=365, description="Lookback window in days"),
+):
+    """
+    Get the live compliance operations dashboard data.
+    Returns aggregated counts, framework breakdown, recent findings with
+    derived status, analytics charts, and operational metrics.
+    """
+    try:
+        from app.services.redis import get_cache, set_cache
+
+        cache_key = f"compliance:dashboard:{days}"
+        cached = await get_cache(cache_key)
+        if cached:
+            return ComplianceDashboardResponse(**cached)
+
+        result = await get_compliance_dashboard(days=days)
+
+        await set_cache(cache_key, result.model_dump(), ttl=60)
+        return result
+    except Exception as e:
+        logger.error("Failed to get compliance dashboard", error=str(e))
+        return ComplianceDashboardResponse(updated_at=datetime.utcnow().isoformat())
 
 
 @router.get("/compliance/alerts")
@@ -1854,7 +1882,42 @@ async def get_executive_dashboard_endpoint(
     This endpoint queries the same scans table as other dashboard
     endpoints — no separate document index is needed.
     """
+    cache_key = f"dashboard:executive:{days}:{limit}"
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return ExecutiveDashboardResponse(**cached)
     data = await get_executive_dashboard(days=days, limit=limit)
+    await set_cache(cache_key, data.model_dump(), ttl=60)
+    return data
+
+
+@router.get("/dashboard/executive-decision", response_model=ExecutiveDecisionResponse)
+async def get_executive_decision_endpoint():
+    """
+    Return the executive decision card for the most recent investigation.
+    Cached in Redis; invalidated on every new/updated investigation.
+    """
+    cache_key = "dashboard:executive-decision"
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return ExecutiveDecisionResponse(**cached)
+    data = await get_executive_decision()
+    await set_cache(cache_key, data.model_dump(), ttl=60)
+    return data
+
+
+@router.get("/dashboard/statistics", response_model=DashboardStatisticsResponse)
+async def get_dashboard_statistics_endpoint():
+    """
+    Return real-time dashboard statistics computed from the database.
+    Cached in Redis; invalidated on every new/updated investigation.
+    """
+    cache_key = "dashboard:statistics"
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return DashboardStatisticsResponse(**cached)
+    data = await get_dashboard_statistics()
+    await set_cache(cache_key, data.model_dump(), ttl=60)
     return data
 
 
@@ -2068,6 +2131,16 @@ async def get_investigation_detail(
                 "status": case_meta.get("status", "Open"),
                 "assigned_to": case_meta.get("assigned_to", ""),
                 "notes": case_meta.get("notes", ""),
+                "human_decision": case_meta.get("human_decision"),
+                "reviewer_notes": case_meta.get("reviewer_notes"),
+                "assigned_team": case_meta.get("assigned_team"),
+                "reviewed_by": case_meta.get("reviewed_by"),
+                "review_completed_at": case_meta.get("review_completed_at"),
+                "review_status": case_meta.get("review_status", "Pending"),
+                "notify_compliance": case_meta.get("notify_compliance", False),
+                "require_branch_verification": case_meta.get("require_branch_verification", False),
+                "escalate_manager": case_meta.get("escalate_manager", False),
+                "freeze_processing": case_meta.get("freeze_processing", False),
                 "findings": findings,
                 "top_findings": top_findings,
                 "risk_categories": risk_categories,
@@ -2153,6 +2226,67 @@ async def update_investigation_status(
     except Exception as e:
         logger.error("Failed to update investigation status", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to update investigation")
+
+
+@router.put("/investigations/{scan_id}/decision")
+async def update_investigation_decision(
+    scan_id: str,
+    decision_req: AnalystDecisionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Save the analyst's final decision for an investigation.
+    Publishes WebSocket event and invalidates dashboard caches.
+    """
+    try:
+        result = await save_analyst_decision(scan_id, decision_req, current_user)
+
+        # Publish WebSocket event and invalidate caches
+        try:
+            from app.services.websocket_manager import REDIS_EVENTS_CHANNEL
+            redis = await get_redis_client()
+
+            await redis.publish(REDIS_EVENTS_CHANNEL, json.dumps({
+                "event": "investigation_decision_updated",
+                "scan_id": scan_id,
+                "data": {
+                    "scan_id": scan_id,
+                    "decision": decision_req.decision,
+                    "reviewer_notes": decision_req.reviewer_notes,
+                    "reviewed_by": current_user.get("full_name") or current_user.get("username", "unknown"),
+                    "review_completed_at": result.review_completed_at,
+                    "review_status": "Completed",
+                }
+            }))
+
+            await delete_cache("dashboard:executive")
+            await delete_cache("dashboard:executive-decision")
+            await delete_cache("dashboard:statistics")
+            await delete_cache(f"compliance:dashboard:30")
+
+            # Signal dashboard statistics refresh
+            await redis.publish(REDIS_EVENTS_CHANNEL, json.dumps({
+                "event": "dashboard_statistics_updated",
+                "scan_id": scan_id,
+                "data": {"trigger": "investigation_decision_saved"}
+            }))
+
+            # Signal compliance dashboard refresh
+            await redis.publish(REDIS_EVENTS_CHANNEL, json.dumps({
+                "event": "compliance_dashboard_updated",
+                "scan_id": scan_id,
+                "data": {"trigger": "investigation_decision_saved", "decision": decision_req.decision}
+            }))
+        except Exception as ws_err:
+            logger.warning("Failed to publish decision WebSocket event", error=str(ws_err))
+
+        return result
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Failed to save investigation decision", scan_id=scan_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to save decision")
 
 
 class HumanDecisionRequest(BaseModel):
